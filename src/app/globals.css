@@ -1,0 +1,66 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0c0f14;
+  --surface: #141922;
+  --border: #252b36;
+  --muted: #8b95a8;
+  --text: #e8ecf4;
+  --accent: #6ee7b7;
+  --accent-dim: #34d39966;
+}
+
+body {
+  @apply min-h-screen antialiased;
+  font-family: "DM Sans", system-ui, sans-serif;
+  background: radial-gradient(1200px 600px at 10% -10%, #1a2435 0%, var(--bg) 55%);
+  color: var(--text);
+}
+
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.card {
+  @apply rounded-xl border p-4;
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.input {
+  @apply w-full rounded-lg border px-3 py-2 text-sm outline-none transition;
+  background: #0f131a;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #34d399, #2dd4bf);
+  color: #04120c;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-ghost:hover {
+  border-color: #3d4656;
+}
