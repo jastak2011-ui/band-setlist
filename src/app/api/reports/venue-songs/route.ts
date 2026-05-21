@@ -1,24 +1,24 @@
-import { NextResponse } from "next/server";
-import { getSqlite } from "@/lib/db";
+﻿import { NextResponse } from "next/server";
+import { query } from "@/lib/db";
 
 type GroupTotalRow = {
-  bandId: string | null;
-  bandName: string | null;
-  venueId: string;
-  venueName: string;
-  totalSetlists: number;
+  band_id: string | null;
+  band_name: string | null;
+  venue_id: string;
+  venue_name: string;
+  total_setlists: string;
 };
 
 type SongReportRow = {
-  bandId: string | null;
-  bandName: string | null;
-  venueId: string;
-  venueName: string;
-  songId: string;
+  band_id: string | null;
+  band_name: string | null;
+  venue_id: string;
+  venue_name: string;
+  song_id: string;
   title: string;
   artist: string;
-  playCount: number;
-  setlistCount: number;
+  play_count: string;
+  setlist_count: string;
 };
 
 function buildWhere(venueId: string | null, bandId: string | null) {
@@ -26,16 +26,16 @@ function buildWhere(venueId: string | null, bandId: string | null) {
   const params: string[] = [];
 
   if (venueId) {
-    clauses.push("sl.venue_id = ?");
     params.push(venueId);
+    clauses.push(`sl.venue_id = $${params.length}`);
   }
 
   if (bandId) {
     if (bandId === "__none") {
       clauses.push("sl.band_id IS NULL");
     } else {
-      clauses.push("sl.band_id = ?");
       params.push(bandId);
+      clauses.push(`sl.band_id = $${params.length}`);
     }
   }
 
@@ -49,53 +49,50 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const venueId = url.searchParams.get("venueId");
   const bandId = url.searchParams.get("bandId");
-  const sqlite = getSqlite();
   const filters = buildWhere(venueId, bandId);
 
-  const groupTotals = sqlite
-    .prepare(
-      `
-      SELECT
-        sl.band_id AS bandId,
-        COALESCE(b.name, 'No band assigned') AS bandName,
-        v.id AS venueId,
-        v.name AS venueName,
-        COUNT(sl.id) AS totalSetlists
-      FROM setlists sl
-      LEFT JOIN bands b ON b.id = sl.band_id
-      JOIN venues v ON v.id = sl.venue_id
-      ${filters.where}
-      GROUP BY sl.band_id, bandName, v.id, v.name
-      ORDER BY bandName COLLATE NOCASE, v.name COLLATE NOCASE
-      `,
-    )
-    .all(...filters.params) as GroupTotalRow[];
+  const groupTotals = await query<GroupTotalRow>(
+    `
+    SELECT
+      sl.band_id,
+      COALESCE(b.name, 'No band assigned') AS band_name,
+      v.id AS venue_id,
+      v.name AS venue_name,
+      COUNT(sl.id) AS total_setlists
+    FROM setlists sl
+    LEFT JOIN bands b ON b.id = sl.band_id
+    JOIN venues v ON v.id = sl.venue_id
+    ${filters.where}
+    GROUP BY sl.band_id, band_name, v.id, v.name
+    ORDER BY lower(COALESCE(b.name, 'No band assigned')), lower(v.name)
+    `,
+    filters.params,
+  );
 
-  const rows = sqlite
-    .prepare(
-      `
-      SELECT
-        sl.band_id AS bandId,
-        COALESCE(b.name, 'No band assigned') AS bandName,
-        v.id AS venueId,
-        v.name AS venueName,
-        s.id AS songId,
-        s.title AS title,
-        s.artist AS artist,
-        COUNT(sss.id) AS playCount,
-        COUNT(DISTINCT sl.id) AS setlistCount
-      FROM setlists sl
-      LEFT JOIN bands b ON b.id = sl.band_id
-      JOIN venues v ON v.id = sl.venue_id
-      JOIN setlist_sets ss ON ss.setlist_id = sl.id
-      JOIN setlist_set_songs sss ON sss.set_id = ss.id
-      JOIN songs s ON s.id = sss.song_id
-      ${filters.where}
-      GROUP BY sl.band_id, bandName, v.id, v.name, s.id, s.title, s.artist
-      ORDER BY bandName COLLATE NOCASE, v.name COLLATE NOCASE, playCount DESC, s.title COLLATE NOCASE
-      `,
-    )
-    .all(...filters.params) as SongReportRow[];
+  const rows = await query<SongReportRow>(
+    `
+    SELECT
+      sl.band_id,
+      COALESCE(b.name, 'No band assigned') AS band_name,
+      v.id AS venue_id,
+      v.name AS venue_name,
+      s.id AS song_id,
+      s.title,
+      s.artist,
+      COUNT(sss.id) AS play_count,
+      COUNT(DISTINCT sl.id) AS setlist_count
+    FROM setlists sl
+    LEFT JOIN bands b ON b.id = sl.band_id
+    JOIN venues v ON v.id = sl.venue_id
+    JOIN setlist_sets ss ON ss.setlist_id = sl.id
+    JOIN setlist_set_songs sss ON sss.set_id = ss.id
+    JOIN songs s ON s.id = sss.song_id
+    ${filters.where}
+    GROUP BY sl.band_id, band_name, v.id, v.name, s.id, s.title, s.artist
+    ORDER BY lower(COALESCE(b.name, 'No band assigned')), lower(v.name), play_count DESC, lower(s.title)
+    `,
+    filters.params,
+  );
 
   const bandMap = new Map<
     string,
@@ -120,31 +117,32 @@ export async function GET(req: Request) {
   >();
   const venueMap = new Map<string, { totalSetlists: number; songs: Array<{ id: string; title: string; artist: string; playCount: number; setlistCount: number; playPercent: number }> }>();
 
-  for (const group of groupTotals) {
-    const bandKey = group.bandId ?? "__none";
+  for (const group of groupTotals.rows) {
+    const bandKey = group.band_id ?? "__none";
     let band = bandMap.get(bandKey);
     if (!band) {
-      band = { id: group.bandId, name: group.bandName ?? "No band assigned", totalSetlists: 0, venues: [] };
+      band = { id: group.band_id, name: group.band_name ?? "No band assigned", totalSetlists: 0, venues: [] };
       bandMap.set(bandKey, band);
     }
 
-    const venue = { id: group.venueId, name: group.venueName, totalSetlists: group.totalSetlists, songs: [] };
-    band.totalSetlists += group.totalSetlists;
+    const venue = { id: group.venue_id, name: group.venue_name, totalSetlists: Number(group.total_setlists), songs: [] };
+    band.totalSetlists += venue.totalSetlists;
     band.venues.push(venue);
-    venueMap.set(`${bandKey}:${group.venueId}`, venue);
+    venueMap.set(`${bandKey}:${group.venue_id}`, venue);
   }
 
-  for (const row of rows) {
-    const bandKey = row.bandId ?? "__none";
-    const venue = venueMap.get(`${bandKey}:${row.venueId}`);
+  for (const row of rows.rows) {
+    const bandKey = row.band_id ?? "__none";
+    const venue = venueMap.get(`${bandKey}:${row.venue_id}`);
     if (!venue) continue;
+    const setlistCount = Number(row.setlist_count);
     venue.songs.push({
-      id: row.songId,
+      id: row.song_id,
       title: row.title,
       artist: row.artist,
-      playCount: row.playCount,
-      setlistCount: row.setlistCount,
-      playPercent: venue.totalSetlists > 0 ? (row.setlistCount / venue.totalSetlists) * 100 : 0,
+      playCount: Number(row.play_count),
+      setlistCount,
+      playPercent: venue.totalSetlists > 0 ? (setlistCount / venue.totalSetlists) * 100 : 0,
     });
   }
 

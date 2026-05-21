@@ -1,7 +1,5 @@
-import { NextResponse } from "next/server";
-import { asc } from "drizzle-orm";
-import { getDb } from "@/lib/db";
-import { songs } from "@/lib/db/schema";
+﻿import { NextResponse } from "next/server";
+import { mapSong, query } from "@/lib/db";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
 
 export async function GET(req: Request) {
@@ -10,8 +8,7 @@ export async function GET(req: Request) {
   const bandId = url.searchParams.get("bandId") || undefined;
   if (!venueId) return NextResponse.json({ error: "venueId required" }, { status: 400 });
 
-  const db = getDb();
-  const allSongs = await db.select().from(songs).orderBy(asc(songs.title));
+  const allSongs = (await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)")).rows.map(mapSong);
   const seed = Number(url.searchParams.get("seed") ?? Date.now());
   const counts = await getVenueSongPlayCounts(venueId, bandId);
 

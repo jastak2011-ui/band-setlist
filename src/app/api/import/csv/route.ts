@@ -1,8 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
 import Papa from "papaparse";
-import { getDb } from "@/lib/db";
-import { songs } from "@/lib/db/schema";
+import { query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 function emptyToNull(value: unknown) {
@@ -49,9 +48,6 @@ export async function POST(req: Request) {
   if (parsed.errors.length) {
     return NextResponse.json({ error: parsed.errors.map((e) => e.message) }, { status: 400 });
   }
-
-  const db = getDb();
-  const now = new Date();
   const inserted: string[] = [];
 
   for (const raw of parsed.data) {
@@ -81,31 +77,46 @@ export async function POST(req: Request) {
     const r = rowSchema.safeParse(mapped);
     if (!r.success) continue;
     const id = newId();
-    await db.insert(songs).values({
-      id,
-      title: r.data.title,
-      artist: r.data.artist,
-      bpm: r.data.bpm ?? null,
-      musicalKey: r.data.key ?? null,
-      durationSec: r.data.duration_sec ?? null,
-      energy: r.data.energy ?? null,
-      notes: r.data.notes ?? null,
-      genre: r.data.genre ?? null,
-      vibe: r.data.vibe ?? null,
-      crowdScore: r.data.crowd_score ?? null,
-      danceability: r.data.danceability ?? null,
-      vocalDifficulty: r.data.vocal_difficulty ?? null,
-      openerCandidate: r.data.opener_candidate ?? null,
-      closerCandidate: r.data.closer_candidate ?? null,
-      leadSinger: r.data.lead_singer ?? null,
-      capoOrTuning: r.data.capo_or_tuning ?? null,
-      avoidAfter: r.data.avoid_after ?? null,
-      createdAt: now,
-    });
+    await query(
+      `
+      INSERT INTO songs (
+        id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
+        crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
+        lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+      )
+      `,
+      [
+        id,
+        r.data.title,
+        r.data.artist,
+        r.data.bpm ?? null,
+        r.data.key ?? null,
+        r.data.duration_sec ?? null,
+        r.data.energy ?? null,
+        r.data.notes ?? null,
+        r.data.genre ?? null,
+        r.data.vibe ?? null,
+        r.data.crowd_score ?? null,
+        r.data.danceability ?? null,
+        r.data.vocal_difficulty ?? null,
+        r.data.opener_candidate ?? null,
+        r.data.closer_candidate ?? null,
+        r.data.lead_singer ?? null,
+        r.data.capo_or_tuning ?? null,
+        r.data.avoid_after ?? null,
+      ],
+    );
     inserted.push(id);
   }
 
   return NextResponse.json({ imported: inserted.length, ids: inserted });
 }
+
+
+
+
 
 

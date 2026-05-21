@@ -1,8 +1,6 @@
 ﻿import { NextResponse } from "next/server";
-import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { songs } from "@/lib/db/schema";
+import { mapSong, query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value));
@@ -28,9 +26,8 @@ const songInput = z.object({
 });
 
 export async function GET() {
-  const db = getDb();
-  const rows = await db.select().from(songs).orderBy(asc(songs.title));
-  return NextResponse.json(rows);
+  const result = await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)");
+  return NextResponse.json(result.rows.map(mapSong));
 }
 
 export async function POST(req: Request) {
@@ -39,33 +36,41 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
+
   const v = parsed.data;
   const id = newId();
-  const now = new Date();
-  const db = getDb();
-  await db.insert(songs).values({
-    id,
-    title: v.title,
-    artist: v.artist,
-    bpm: v.bpm ?? null,
-    musicalKey: v.musicalKey ?? null,
-    durationSec: v.durationSec ?? null,
-    energy: v.energy ?? null,
-    notes: v.notes ?? null,
-    genre: v.genre ?? null,
-    vibe: v.vibe ?? null,
-    crowdScore: v.crowdScore ?? null,
-    danceability: v.danceability ?? null,
-    vocalDifficulty: v.vocalDifficulty ?? null,
-    openerCandidate: v.openerCandidate ?? null,
-    closerCandidate: v.closerCandidate ?? null,
-    leadSinger: v.leadSinger ?? null,
-    capoOrTuning: v.capoOrTuning ?? null,
-    avoidAfter: v.avoidAfter ?? null,
-    createdAt: now,
-  });
-  const [row] = await db.select().from(songs).where(eq(songs.id, id));
-  return NextResponse.json(row, { status: 201 });
+  const result = await query(
+    `
+    INSERT INTO songs (
+      id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
+      crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
+      lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+    )
+    RETURNING *
+    `,
+    [
+      id,
+      v.title,
+      v.artist,
+      v.bpm ?? null,
+      v.musicalKey ?? null,
+      v.durationSec ?? null,
+      v.energy ?? null,
+      v.notes ?? null,
+      v.genre ?? null,
+      v.vibe ?? null,
+      v.crowdScore ?? null,
+      v.danceability ?? null,
+      v.vocalDifficulty ?? null,
+      v.openerCandidate ?? null,
+      v.closerCandidate ?? null,
+      v.leadSinger ?? null,
+      v.capoOrTuning ?? null,
+      v.avoidAfter ?? null,
+    ],
+  );
+  return NextResponse.json(mapSong(result.rows[0]), { status: 201 });
 }
-
-

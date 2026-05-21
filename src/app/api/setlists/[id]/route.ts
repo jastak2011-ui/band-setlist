@@ -1,8 +1,6 @@
-import { NextResponse } from "next/server";
-import { asc, eq, inArray } from "drizzle-orm";
+﻿import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { setlistSetSongs, setlistSets, setlists, songs } from "@/lib/db/schema";
+import { mapSetlist, mapSong, query, querySongsByIds, transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 type Params = { params: Promise<{ id: string }> };
@@ -15,26 +13,24 @@ const patchBody = z.object({
 });
 
 async function getSetlistDetail(id: string) {
-  const db = getDb();
-  const [list] = await db.select().from(setlists).where(eq(setlists.id, id));
+  const listResult = await query("SELECT * FROM setlists WHERE id = $1", [id]);
+  const list = listResult.rows[0];
   if (!list) return null;
 
-  const sets = await db.select().from(setlistSets).where(eq(setlistSets.setlistId, id)).orderBy(asc(setlistSets.setIndex));
+  const setResult = await query("SELECT * FROM setlist_sets WHERE setlist_id = $1 ORDER BY set_index", [id]);
   const outSets = [];
-  for (const s of sets) {
-    const links = await db
-      .select({ position: setlistSetSongs.position, songId: setlistSetSongs.songId })
-      .from(setlistSetSongs)
-      .where(eq(setlistSetSongs.setId, s.id))
-      .orderBy(asc(setlistSetSongs.position));
-
-    const ids = links.map((l) => l.songId);
-    const songRows = ids.length === 0 ? [] : await db.select().from(songs).where(inArray(songs.id, ids));
-    const songMap = new Map(songRows.map((r) => [r.id, r]));
-    outSets.push({ index: s.setIndex + 1, songs: links.map((l) => songMap.get(l.songId)).filter(Boolean) });
+  for (const set of setResult.rows) {
+    const linkResult = await query(
+      "SELECT position, song_id FROM setlist_set_songs WHERE set_id = $1 ORDER BY position",
+      [set.id],
+    );
+    const ids = linkResult.rows.map((row) => row.song_id as string);
+    const songRows = await querySongsByIds(ids);
+    const songMap = new Map(songRows.map((row) => [row.id, row]));
+    outSets.push({ index: Number(set.set_index) + 1, songs: linkResult.rows.map((row) => songMap.get(row.song_id)).filter(Boolean) });
   }
 
-  return { setlist: list, sets: outSets };
+  return { setlist: mapSetlist(list), sets: outSets };
 }
 
 export async function GET(_req: Request, context: Params) {
@@ -50,50 +46,61 @@ export async function PATCH(req: Request, context: Params) {
   const parsed = patchBody.safeParse(json);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  const db = getDb();
-  const [list] = await db.select().from(setlists).where(eq(setlists.id, id));
-  if (!list) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const exists = await query("SELECT id FROM setlists WHERE id = $1", [id]);
+  if (!exists.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const updates: Partial<typeof setlists.$inferInsert> = {};
-  if (parsed.data.bandId !== undefined) updates.bandId = parsed.data.bandId;
-  if (parsed.data.title !== undefined) updates.title = parsed.data.title;
-  if (parsed.data.performedAt !== undefined) {
-    updates.performedAt = parsed.data.performedAt ? new Date(parsed.data.performedAt) : null;
-  }
-  if (Object.keys(updates).length > 0) {
-    await db.update(setlists).set(updates).where(eq(setlists.id, id));
-  }
-
-  if (parsed.data.sets) {
-    const existingSets = await db.select().from(setlistSets).where(eq(setlistSets.setlistId, id));
-    const existingSetIds = existingSets.map((set) => set.id);
-    if (existingSetIds.length > 0) await db.delete(setlistSetSongs).where(inArray(setlistSetSongs.setId, existingSetIds));
-    await db.delete(setlistSets).where(eq(setlistSets.setlistId, id));
-
-    for (let i = 0; i < parsed.data.sets.length; i++) {
-      const setId = newId();
-      await db.insert(setlistSets).values({ id: setId, setlistId: id, setIndex: i });
-      const songIds = parsed.data.sets[i];
-      for (let p = 0; p < songIds.length; p++) {
-        await db.insert(setlistSetSongs).values({ id: newId(), setId, songId: songIds[p], position: p });
-      }
+  await transaction(async (client) => {
+    const updates: string[] = [];
+    const params: unknown[] = [id];
+    if (parsed.data.bandId !== undefined) {
+      params.push(parsed.data.bandId);
+      updates.push(`band_id = $${params.length}`);
     }
-  }
+    if (parsed.data.title !== undefined) {
+      params.push(parsed.data.title);
+      updates.push(`title = $${params.length}`);
+    }
+    if (parsed.data.performedAt !== undefined) {
+      params.push(parsed.data.performedAt ? new Date(parsed.data.performedAt) : null);
+      updates.push(`performed_at = $${params.length}`);
+    }
+    if (updates.length > 0) {
+      await client.query(`UPDATE setlists SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $1`, params);
+    }
+
+    if (parsed.data.sets) {
+      const existingSets = await client.query("SELECT id FROM setlist_sets WHERE setlist_id = $1", [id]);
+      const existingSetIds = existingSets.rows.map((row) => row.id as string);
+      if (existingSetIds.length > 0) {
+        await client.query("DELETE FROM setlist_set_songs WHERE set_id = ANY($1::text[])", [existingSetIds]);
+      }
+      await client.query("DELETE FROM setlist_sets WHERE setlist_id = $1", [id]);
+
+      for (let i = 0; i < parsed.data.sets.length; i++) {
+        const setId = newId();
+        await client.query(
+          "INSERT INTO setlist_sets (id, setlist_id, set_index, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+          [setId, id, i],
+        );
+        const songIds = parsed.data.sets[i];
+        for (let p = 0; p < songIds.length; p++) {
+          await client.query(
+            "INSERT INTO setlist_set_songs (id, set_id, song_id, position, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
+            [newId(), setId, songIds[p], p],
+          );
+        }
+      }
+      await client.query("UPDATE setlists SET updated_at = NOW() WHERE id = $1", [id]);
+    }
+  });
 
   const detail = await getSetlistDetail(id);
   return NextResponse.json(detail ?? { ok: true });
 }
+
 export async function DELETE(_req: Request, context: Params) {
   const { id } = await context.params;
-  const db = getDb();
-  const [list] = await db.select().from(setlists).where(eq(setlists.id, id));
-  if (!list) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const existingSets = await db.select().from(setlistSets).where(eq(setlistSets.setlistId, id));
-  const existingSetIds = existingSets.map((set) => set.id);
-  if (existingSetIds.length > 0) await db.delete(setlistSetSongs).where(inArray(setlistSetSongs.setId, existingSetIds));
-  await db.delete(setlistSets).where(eq(setlistSets.setlistId, id));
-  await db.delete(setlists).where(eq(setlists.id, id));
-
+  const result = await query("DELETE FROM setlists WHERE id = $1 RETURNING id", [id]);
+  if (!result.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

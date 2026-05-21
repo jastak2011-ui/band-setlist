@@ -1,16 +1,13 @@
-import { NextResponse } from "next/server";
-import { asc } from "drizzle-orm";
+﻿import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { bands } from "@/lib/db/schema";
+import { mapNamedRow, query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 const body = z.object({ name: z.string().min(1).max(200) });
 
 export async function GET() {
-  const db = getDb();
-  const rows = await db.select().from(bands).orderBy(asc(bands.name));
-  return NextResponse.json(rows);
+  const result = await query("SELECT * FROM bands ORDER BY lower(name)");
+  return NextResponse.json(result.rows.map(mapNamedRow));
 }
 
 export async function POST(req: Request) {
@@ -19,9 +16,9 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const id = newId();
-  const now = new Date();
-  const db = getDb();
-  await db.insert(bands).values({ id, name: parsed.data.name, createdAt: now });
-  return NextResponse.json({ id, name: parsed.data.name, createdAt: now }, { status: 201 });
+  const result = await query(
+    "INSERT INTO bands (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) RETURNING *",
+    [newId(), parsed.data.name],
+  );
+  return NextResponse.json(mapNamedRow(result.rows[0]), { status: 201 });
 }

@@ -1,6 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { getDb } from "./db";
-import { setlistSetSongs, setlistSets, setlists } from "./db/schema";
+﻿import { query } from "./db";
 
 const DEFAULT_RECENT = 10;
 
@@ -13,25 +11,34 @@ export async function getVenueSongPlayCounts(
   bandId?: string,
   recentSetlists = DEFAULT_RECENT,
 ): Promise<Map<string, number>> {
-  const db = getDb();
-  const conditions = bandId ? and(eq(setlists.venueId, venueId), eq(setlists.bandId, bandId)) : eq(setlists.venueId, venueId);
-  const lists = await db
-    .select({ id: setlists.id })
-    .from(setlists)
-    .where(conditions)
-    .orderBy(desc(setlists.createdAt))
-    .limit(recentSetlists);
+  const params: unknown[] = [venueId];
+  let bandClause = "";
+  if (bandId) {
+    params.push(bandId);
+    bandClause = `AND band_id = $${params.length}`;
+  }
+  params.push(recentSetlists);
 
-  const listIds = lists.map((l) => l.id);
+  const lists = await query<{ id: string }>(
+    `SELECT id FROM setlists WHERE venue_id = $1 ${bandClause} ORDER BY created_at DESC LIMIT $${params.length}`,
+    params,
+  );
+  const listIds = lists.rows.map((row) => row.id);
   if (listIds.length === 0) return new Map();
 
-  const setRows = await db.select({ id: setlistSets.id }).from(setlistSets).where(inArray(setlistSets.setlistId, listIds));
-  const setIds = setRows.map((s) => s.id);
-  if (setIds.length === 0) return new Map();
+  const rows = await query<{ song_id: string; play_count: string }>(
+    `
+    SELECT sss.song_id, COUNT(*) AS play_count
+    FROM setlist_sets ss
+    JOIN setlist_set_songs sss ON sss.set_id = ss.id
+    WHERE ss.setlist_id = ANY($1::text[])
+    GROUP BY sss.song_id
+    `,
+    [listIds],
+  );
 
-  const songRows = await db.select({ songId: setlistSetSongs.songId }).from(setlistSetSongs).where(inArray(setlistSetSongs.setId, setIds));
   const counts = new Map<string, number>();
-  for (const row of songRows) counts.set(row.songId, (counts.get(row.songId) ?? 0) + 1);
+  for (const row of rows.rows) counts.set(row.song_id, Number(row.play_count));
   return counts;
 }
 

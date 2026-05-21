@@ -1,8 +1,6 @@
 ﻿import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
-import { songs } from "@/lib/db/schema";
+import { mapSong, query } from "@/lib/db";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value));
 
@@ -28,6 +26,26 @@ const patch = z.object({
 
 type Params = { params: Promise<{ id: string }> };
 
+const columnMap: Record<string, string> = {
+  title: "title",
+  artist: "artist",
+  bpm: "bpm",
+  musicalKey: "musical_key",
+  durationSec: "duration_sec",
+  energy: "energy",
+  notes: "notes",
+  genre: "genre",
+  vibe: "vibe",
+  crowdScore: "crowd_score",
+  danceability: "danceability",
+  vocalDifficulty: "vocal_difficulty",
+  openerCandidate: "opener_candidate",
+  closerCandidate: "closer_candidate",
+  leadSinger: "lead_singer",
+  capoOrTuning: "capo_or_tuning",
+  avoidAfter: "avoid_after",
+};
+
 export async function PATCH(req: Request, context: Params) {
   const { id } = await context.params;
   const json = await req.json();
@@ -35,40 +53,24 @@ export async function PATCH(req: Request, context: Params) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const db = getDb();
-  const u = parsed.data;
-  const set: Record<string, unknown> = {};
-  if (u.title !== undefined) set.title = u.title;
-  if (u.artist !== undefined) set.artist = u.artist;
-  if (u.bpm !== undefined) set.bpm = u.bpm;
-  if (u.musicalKey !== undefined) set.musicalKey = u.musicalKey;
-  if (u.durationSec !== undefined) set.durationSec = u.durationSec;
-  if (u.energy !== undefined) set.energy = u.energy;
-  if (u.notes !== undefined) set.notes = u.notes;
-  if (u.genre !== undefined) set.genre = u.genre;
-  if (u.vibe !== undefined) set.vibe = u.vibe;
-  if (u.crowdScore !== undefined) set.crowdScore = u.crowdScore;
-  if (u.danceability !== undefined) set.danceability = u.danceability;
-  if (u.vocalDifficulty !== undefined) set.vocalDifficulty = u.vocalDifficulty;
-  if (u.openerCandidate !== undefined) set.openerCandidate = u.openerCandidate;
-  if (u.closerCandidate !== undefined) set.closerCandidate = u.closerCandidate;
-  if (u.leadSinger !== undefined) set.leadSinger = u.leadSinger;
-  if (u.capoOrTuning !== undefined) set.capoOrTuning = u.capoOrTuning;
-  if (u.avoidAfter !== undefined) set.avoidAfter = u.avoidAfter;
-  if (Object.keys(set).length === 0) {
+
+  const entries = Object.entries(parsed.data).filter(([, value]) => value !== undefined);
+  if (entries.length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
-  await db.update(songs).set(set as never).where(eq(songs.id, id));
-  const [row] = await db.select().from(songs).where(eq(songs.id, id));
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(row);
+
+  const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 2}`);
+  const values = entries.map(([, value]) => value);
+  const result = await query(
+    `UPDATE songs SET ${assignments.join(", ")}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [id, ...values],
+  );
+  if (!result.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json(mapSong(result.rows[0]));
 }
 
 export async function DELETE(_req: Request, context: Params) {
   const { id } = await context.params;
-  const db = getDb();
-  await db.delete(songs).where(eq(songs.id, id));
+  await query("DELETE FROM songs WHERE id = $1", [id]);
   return NextResponse.json({ ok: true });
 }
-
-
