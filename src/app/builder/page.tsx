@@ -10,10 +10,11 @@ type Venue = { id: string; name: string };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; importIndex?: number };
 type Built = { index: number; songs: BuiltSong[] };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
-type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[] };
+type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
+type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
 
 
-function normalizeForMatch(value: string) {
+function normalizeNameForMatch(value: string) {
   return value
     .toLowerCase()
     .normalize("NFD")
@@ -24,6 +25,14 @@ function normalizeForMatch(value: string) {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeForMatch(value: string) {
+  return normalizeNameForMatch(value);
+}
+
+function compactNameForMatch(value: string) {
+  return normalizeNameForMatch(value).replace(/\s+/g, "");
 }
 
 function tokenScore(a: string, b: string) {
@@ -49,6 +58,79 @@ function tokenScore(a: string, b: string) {
   return overlap / union.size;
 }
 
+function parseDateTokenFromFileName(fileName: string) {
+  const stem = fileName.replace(/\.[^.]+$/, "");
+  const match = stem.match(/(?:^|\D)(\d{8}|\d{6})(?:\D|$)/);
+  if (!match) return null;
+
+  const token = match[1];
+  const month = Number(token.slice(0, 2));
+  const day = Number(token.slice(2, 4));
+  const year = token.length === 6 ? 2000 + Number(token.slice(4, 6)) : Number(token.slice(4, 8));
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return {
+    token,
+    inputValue: `${year}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`,
+  };
+}
+
+function matchNamedItem<T extends { id: string; name: string }>(items: T[], text: string) {
+  const normalizedText = normalizeNameForMatch(text);
+  const compactText = compactNameForMatch(text);
+  let best: { item: T; score: number } | null = null;
+
+  for (const item of items) {
+    const normalizedName = normalizeNameForMatch(item.name);
+    const compactName = compactNameForMatch(item.name);
+    if (!normalizedName || !compactName) continue;
+
+    let score = 0;
+    if (compactText === compactName) score = 10000;
+    else if (compactText.startsWith(compactName)) score = 8000 + compactName.length;
+    else if (compactText.includes(compactName)) score = 5000 + compactName.length;
+    else {
+      const fuzzyScore = tokenScore(normalizedName, normalizedText);
+      if (fuzzyScore >= 0.75) score = fuzzyScore * 1000 + compactName.length;
+    }
+
+    if (score > 0 && (!best || score > best.score)) best = { item, score };
+  }
+
+  return best?.item ?? null;
+}
+
+function removeMatchedPrefix(text: string, matchedName: string | null) {
+  if (!matchedName) return text;
+  const normalizedText = normalizeNameForMatch(text);
+  const normalizedName = normalizeNameForMatch(matchedName);
+  return normalizedText.startsWith(normalizedName) ? normalizedText.slice(normalizedName.length).trim() : text;
+}
+
+function parseMetadataFromFileName(fileName: string, bands: Band[], venues: Venue[]): ImportDetectedMetadata {
+  const stem = fileName.replace(/\.[^.]+$/, "");
+  const date = parseDateTokenFromFileName(fileName);
+  const nameWithoutDate = date ? stem.replace(date.token, " ") : stem;
+  const matchedBand = matchNamedItem(bands, nameWithoutDate);
+  const venueSearchText = removeMatchedPrefix(nameWithoutDate, matchedBand?.name ?? null);
+  const matchedVenue = matchNamedItem(venues, venueSearchText) ?? matchNamedItem(venues, nameWithoutDate);
+
+  return {
+    fileName,
+    bandName: matchedBand?.name ?? null,
+    venueName: matchedVenue?.name ?? null,
+    performanceDate: date?.inputValue ?? null,
+    setCount: 1,
+  };
+}
+
+function detectSetMarkersFromImportedRows(title: string) {
+  const normalized = normalizeNameForMatch(title);
+  const match = normalized.match(/^set\s*(\d+)$/i);
+  if (!match) return null;
+  const setNumber = Number(match[1]);
+  return Number.isFinite(setNumber) && setNumber > 0 ? setNumber : null;
+}
 function matchImportedSong(imported: ImportedSong, library: Song[], usedIds: Set<string>) {
   const importedTitle = normalizeForMatch(imported.title);
   const importedArtist = normalizeForMatch(imported.artist);
@@ -81,14 +163,14 @@ function parseImportedSongsFromHtml(html: string) {
     const cells = Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent?.trim() ?? "");
     const [title = "", artist = ""] = cells;
     if (!title) continue;
-    if (!artist && /^set\s+\d+/i.test(title)) {
-      const parsedSet = Number(title.match(/\d+/)?.[0] ?? "1");
-      if (Number.isFinite(parsedSet) && parsedSet > 0) {
-        currentSet = parsedSet;
-        setCount = Math.max(setCount, parsedSet);
-      }
+
+    const markerSet = detectSetMarkersFromImportedRows(title);
+    if (markerSet) {
+      currentSet = markerSet;
+      setCount = Math.max(setCount, markerSet);
       continue;
     }
+
     imported.push({ title, artist, setIndex: currentSet, importIndex: imported.length });
   }
 
@@ -101,6 +183,11 @@ function todayForDateInput() {
 function formatTitleDate(value: string) {
   const date = new Date(`${value}T12:00:00`);
   return date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+  return date.toLocaleDateString();
 }
 
 function formatDuration(seconds: number) {
@@ -235,9 +322,17 @@ export default function BuilderPage() {
     setSets(null);
 
     const html = await file.text();
+    const detected = parseMetadataFromFileName(file.name, bands, venues);
     const { imported, setCount } = parseImportedSongsFromHtml(html);
+    const detectedWithSets = { ...detected, setCount };
+    console.info("Setlist import detected metadata", detectedWithSets);
+    if (detected.bandName) setBandId(bands.find((band) => band.name === detected.bandName)?.id ?? "");
+    if (detected.venueName) setVenueId(venues.find((venue) => venue.name === detected.venueName)?.id ?? "");
+    if (detected.performanceDate) setPerformedAt(detected.performanceDate);
+    setNumSets(setCount);
+
     if (imported.length === 0) {
-      setImportSummary({ total: 0, matched: 0, unmatched: [] });
+      setImportSummary({ total: 0, matched: 0, unmatched: [], detected: detectedWithSets });
       setMsg("No songs were found in that import file.");
       return;
     }
@@ -258,11 +353,11 @@ export default function BuilderPage() {
       }
     }
 
-    const fittedSets = fitImportedSetsToCount(importedSets, numSets);
+    const fittedSets = fitImportedSetsToCount(importedSets, setCount);
     setSelected(new Set(matchedIds));
     setSets(matchedIds.length > 0 ? fittedSets : null);
-    setImportSummary({ total: imported.length, matched: matchedIds.length, unmatched });
-    setMsg(`Imported ${matchedIds.length} of ${imported.length} songs from ${file.name} in file order using ${clampSetCount(numSets)} set${clampSetCount(numSets) === 1 ? "" : "s"}. Review the sets, then save or adjust them.`);
+    setImportSummary({ total: imported.length, matched: matchedIds.length, unmatched, detected: detectedWithSets });
+    setMsg(`Imported ${matchedIds.length} of ${imported.length} songs from ${file.name} in file order using ${setCount} set${setCount === 1 ? "" : "s"}. Review the detected setup, then save or adjust it.`);
   }
 
   async function addUnmatchedSong(importedSong: ImportedSong) {
@@ -504,8 +599,16 @@ export default function BuilderPage() {
                 />
               </label>
               {importSummary && (
-                <div className="mt-2 text-xs text-[var(--muted)]">
-                  Matched {importSummary.matched} of {importSummary.total} imported songs.
+                <div className="mt-2 space-y-2 text-xs text-[var(--muted)]">
+                  <div>Matched {importSummary.matched} of {importSummary.total} imported songs.</div>
+                  {importSummary.detected && (
+                    <div className="grid gap-1 rounded-lg border border-[var(--border)] bg-[#0f131a]/60 px-3 py-2 sm:grid-cols-2">
+                      <span>Detected band: <span className="text-[var(--text)]">{importSummary.detected.bandName ?? "No match"}</span></span>
+                      <span>Detected venue: <span className="text-[var(--text)]">{importSummary.detected.venueName ?? "No match"}</span></span>
+                      <span>Detected date: <span className="text-[var(--text)]">{importSummary.detected.performanceDate ? formatShortDate(importSummary.detected.performanceDate) : "No date"}</span></span>
+                      <span>Detected sets: <span className="text-[var(--text)]">{importSummary.detected.setCount}</span></span>
+                    </div>
+                  )}
                   {importSummary.unmatched.length > 0 && (
                     <details className="mt-1">
                       <summary className="cursor-pointer text-rose-300">Review {importSummary.unmatched.length} unmatched song{importSummary.unmatched.length === 1 ? "" : "s"}</summary>
