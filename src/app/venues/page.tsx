@@ -1,18 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { readArrayResponse } from "@/app/client-fetch";
 
 type Venue = { id: string; name: string; createdAt: string };
 
 export default function VenuesPage() {
+  const router = useRouter();
   const [venues, setVenues] = useState<Venue[]>([]);
   const [name, setName] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/venues");
-    setVenues(await r.json());
-  }, []);
+    try {
+      const r = await fetch("/api/venues");
+      setVenues(await readArrayResponse<Venue>(r, router, "Venues"));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to load venues.");
+      setVenues([]);
+    }
+  }, [router]);
 
   useEffect(() => {
     void load();

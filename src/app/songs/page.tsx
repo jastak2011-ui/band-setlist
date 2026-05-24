@@ -1,6 +1,8 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { readArrayResponse } from "@/app/client-fetch";
 
 type Song = {
   id: string;
@@ -343,6 +345,7 @@ function OptionalMetadata({ form, onChange, defaultOpen = false }: { form: SongF
 }
 
 export default function SongsPage() {
+  const router = useRouter();
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<SongForm>(emptyForm);
@@ -379,11 +382,16 @@ export default function SongsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch("/api/songs");
-    const data = await r.json();
-    setSongs(data);
-    setLoading(false);
-  }, []);
+    try {
+      const r = await fetch("/api/songs");
+      setSongs(await readArrayResponse<Song>(r, router, "Songs"));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load songs.");
+      setSongs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
 
   useEffect(() => {
     void load();
@@ -900,7 +908,6 @@ export default function SongsPage() {
     </div>
   );
 }
-
 
 
 

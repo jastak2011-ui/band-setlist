@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
 
 type Venue = { id: string; name: string };
 type Band = { id: string; name: string };
@@ -30,6 +32,7 @@ function formatPercent(value: number) {
 }
 
 export default function ReportsPage() {
+  const router = useRouter();
   const [venues, setVenues] = useState<Venue[]>([]);
   const [bands, setBands] = useState<Band[]>([]);
   const [venueId, setVenueId] = useState("");
@@ -58,10 +61,16 @@ export default function ReportsPage() {
   }, [reports]);
 
   const loadFilters = useCallback(async () => {
-    const [venueResponse, bandResponse] = await Promise.all([fetch("/api/venues"), fetch("/api/bands")]);
-    if (venueResponse.ok) setVenues(await venueResponse.json());
-    if (bandResponse.ok) setBands(await bandResponse.json());
-  }, []);
+    try {
+      const [venueResponse, bandResponse] = await Promise.all([fetch("/api/venues"), fetch("/api/bands")]);
+      setVenues(await readArrayResponse<Venue>(venueResponse, router, "Venues"));
+      setBands(await readArrayResponse<Band>(bandResponse, router, "Bands"));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load filters.");
+      setVenues([]);
+      setBands([]);
+    }
+  }, [router]);
 
   const loadReport = useCallback(async () => {
     setLoading(true);
@@ -70,18 +79,17 @@ export default function ReportsPage() {
     if (venueId) params.set("venueId", venueId);
     if (bandId) params.set("bandId", bandId);
     const query = params.toString();
-    const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`);
-    const json = await response.json();
-    setLoading(false);
-
-    if (!response.ok) {
-      setMsg(json?.error ? JSON.stringify(json.error) : "Failed to load report.");
+    try {
+      const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`);
+      const json = await readObjectResponse<{ bands?: unknown }>(response, router, "Report");
+      setReports(Array.isArray(json?.bands) ? json.bands as BandReport[] : []);
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load report.");
       setReports([]);
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setReports(json.bands ?? []);
-  }, [bandId, venueId]);
+  }, [bandId, router, venueId]);
 
   useEffect(() => {
     void loadFilters();

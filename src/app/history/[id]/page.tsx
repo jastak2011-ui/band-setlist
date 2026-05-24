@@ -2,6 +2,8 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
 
 type Song = {
   id: string;
@@ -68,6 +70,7 @@ async function readErrorMessage(response: Response) {
 }
 
 export default function HistoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const router = useRouter();
   const { id } = use(params);
   const [data, setData] = useState<Detail | null>(null);
   const [sets, setSets] = useState<Detail["sets"]>([]);
@@ -87,17 +90,16 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     let cancelled = false;
     void (async () => {
       const [detailResponse, songsResponse] = await Promise.all([fetch(`/api/setlists/${id}`), fetch("/api/songs")]);
-      const detailJson = await detailResponse.json();
-      const songsJson = await songsResponse.json();
+      const detailJson = await readObjectResponse<Detail>(detailResponse, router, "Setlist detail").catch((error) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load setlist.");
+        return null;
+      });
+      const songsJson = await readArrayResponse<Song>(songsResponse, router, "Songs").catch((error) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load song library.");
+        return [];
+      });
       if (cancelled) return;
-      if (!detailResponse.ok) {
-        setLoadError(typeof detailJson.error === "string" ? detailJson.error : "Failed to load");
-        setData(null);
-        setSets([]);
-        return;
-      }
-      if (!songsResponse.ok) {
-        setLoadError("Failed to load song library");
+      if (!detailJson || !Array.isArray(detailJson.sets)) {
         setData(null);
         setSets([]);
         return;
@@ -113,7 +115,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     if (!data?.setlist.venueId) return;
@@ -123,8 +125,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       const params = new URLSearchParams({ venueId: data.setlist.venueId ?? "", seed: String(Date.now()) });
       if (data.setlist.bandId) params.set("bandId", data.setlist.bandId);
       const response = await fetch(`/api/recommendations?${params.toString()}`);
-      const json = await response.json();
-      if (!cancelled && response.ok && Array.isArray(json.ranked)) {
+      const json = await readObjectResponse<{ ranked?: unknown }>(response, router, "Recommendations").catch(() => null);
+      if (!cancelled && Array.isArray(json?.ranked)) {
         setRecommendedSongs(json.ranked);
         setReplacementCursor(0);
       }
@@ -132,7 +134,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     return () => {
       cancelled = true;
     };
-  }, [data?.setlist.bandId, data?.setlist.venueId]);
+  }, [data?.setlist.bandId, data?.setlist.venueId, router]);
 
   function reshuffleAll() {
     if (sets.length === 0) return;

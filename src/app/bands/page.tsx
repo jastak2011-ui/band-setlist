@@ -1,18 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { readArrayResponse } from "@/app/client-fetch";
 
 type Band = { id: string; name: string; createdAt: string };
 
 export default function BandsPage() {
+  const router = useRouter();
   const [bands, setBands] = useState<Band[]>([]);
   const [name, setName] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/bands");
-    setBands(await r.json());
-  }, []);
+    try {
+      const r = await fetch("/api/bands");
+      setBands(await readArrayResponse<Band>(r, router, "Bands"));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Failed to load bands.");
+      setBands([]);
+    }
+  }, [router]);
 
   useEffect(() => {
     void load();

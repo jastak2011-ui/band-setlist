@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
 
 type Song = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null };
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
@@ -190,6 +191,17 @@ function formatShortDate(value: string) {
   return date.toLocaleDateString();
 }
 
+async function readErrorMessage(response: Response) {
+  const text = await response.text();
+  if (!text) return `Request failed (${response.status})`;
+  try {
+    const data = JSON.parse(text);
+    return typeof data?.error === "string" ? data.error : JSON.stringify(data);
+  } catch {
+    return text;
+  }
+}
+
 function formatDuration(seconds: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -291,11 +303,18 @@ export default function BuilderPage() {
   const generatedTitle = selectedBand && selectedVenue && performedAt ? `${selectedBand.name} - ${selectedVenue.name} - ${formatTitleDate(performedAt)}` : "";
 
   const load = useCallback(async () => {
-    const [sr, br, vr] = await Promise.all([fetch("/api/songs"), fetch("/api/bands"), fetch("/api/venues")]);
-    setSongs(await sr.json());
-    setBands(await br.json());
-    setVenues(await vr.json());
-  }, []);
+    try {
+      const [sr, br, vr] = await Promise.all([fetch("/api/songs"), fetch("/api/bands"), fetch("/api/venues")]);
+      setSongs(await readArrayResponse<Song>(sr, router, "Songs"));
+      setBands(await readArrayResponse<Band>(br, router, "Bands"));
+      setVenues(await readArrayResponse<Venue>(vr, router, "Venues"));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load builder data.");
+      setSongs([]);
+      setBands([]);
+      setVenues([]);
+    }
+  }, [router]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -417,10 +436,14 @@ export default function BuilderPage() {
         saveStrongestForLater,
       }),
     });
-    const data = await r.json();
     setBusy(false);
     if (!r.ok) {
-      setMsg(data.error ? JSON.stringify(data.error) : "Build failed");
+      setMsg(await readErrorMessage(r));
+      return;
+    }
+    const data = await readObjectResponse<{ sets?: Built[] }>(r, router, "Build sets");
+    if (!Array.isArray(data?.sets)) {
+      setMsg("Build response did not include sets.");
       return;
     }
     setImportSummary(null);
@@ -688,6 +711,8 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
   type RecommendationRow = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; recentPlaysAtVenue: number };
   type ReplacementPrompt = { songId: string; mode: "choices" | "list" };
 
+  const router = useRouter();
+  const [msg, setMsg] = useState<string | null>(null);
   const [rows, setRows] = useState<RecommendationRow[]>([]);
   const [targetHours, setTargetHours] = useState("1");
   const [bufferMinutes, setBufferMinutes] = useState("1");
@@ -703,8 +728,11 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
     void (async () => {
       const seed = Date.now();
       const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&seed=${seed}`);
-      const data = await r.json();
-      if (!cancelled && data.ranked) {
+      const data = await readObjectResponse<{ ranked?: unknown }>(r, router, "Recommendations").catch((error) => {
+        if (!cancelled) setMsg(error instanceof Error ? error.message : "Failed to load recommendations.");
+        return null;
+      });
+      if (!cancelled && Array.isArray(data?.ranked)) {
         setRows(data.ranked);
         setReplaceCursor(0);
         setReplacementPrompt(null);
@@ -712,9 +740,9 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
       }
     })();
     return () => { cancelled = true; };
-  }, [bandId, publishRows, venueId]);
+  }, [bandId, publishRows, router, venueId]);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !msg) return null;
 
   const targetSeconds = Math.max(0, Number(targetHours) || 0) * 3600;
   const bufferSeconds = Math.max(0, Number(bufferMinutes) || 0) * 60;
@@ -800,6 +828,7 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
       <p className="mb-3 text-xs text-[var(--muted)]">
         Lower recent plays means less repetition for this band at this venue. Showing {previewRows.length} picks. Selected time includes {formatDuration(pickedSongSeconds)} of songs plus {formatDuration(pickedBufferSeconds)} of between-song buffer.
       </p>
+      {msg && <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{msg}</div>}
       <ul className="grid gap-2 sm:grid-cols-2">
         {previewRows.map((r) => {
           const promptIsOpen = replacementPrompt?.songId === r.id;

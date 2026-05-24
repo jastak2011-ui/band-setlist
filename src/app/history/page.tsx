@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { readArrayResponse } from "@/app/client-fetch";
 
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string };
@@ -52,6 +54,7 @@ async function readErrorMessage(response: Response) {
 }
 
 export default function HistoryPage() {
+  const router = useRouter();
   const [bands, setBands] = useState<Band[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [venueId, setVenueId] = useState("");
@@ -65,19 +68,30 @@ export default function HistoryPage() {
   const venueMap = useMemo(() => new Map(venues.map((venue) => [venue.id, venue])), [venues]);
 
   const loadLookups = useCallback(async () => {
-    const [br, vr] = await Promise.all([fetch("/api/bands"), fetch("/api/venues")]);
-    setBands(await br.json());
-    setVenues(await vr.json());
-  }, []);
+    try {
+      const [br, vr] = await Promise.all([fetch("/api/bands"), fetch("/api/venues")]);
+      setBands(await readArrayResponse<Band>(br, router, "Bands"));
+      setVenues(await readArrayResponse<Venue>(vr, router, "Venues"));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load filters.");
+      setBands([]);
+      setVenues([]);
+    }
+  }, [router]);
 
   const loadLists = useCallback(async () => {
     const params = new URLSearchParams();
     if (venueId) params.set("venueId", venueId);
     if (filterBandId) params.set("bandId", filterBandId);
     const query = params.toString();
-    const r = await fetch(`/api/setlists${query ? `?${query}` : ""}`);
-    setLists(sortHistoryLists(await r.json()));
-  }, [filterBandId, venueId]);
+    try {
+      const r = await fetch(`/api/setlists${query ? `?${query}` : ""}`);
+      setLists(sortHistoryLists(await readArrayResponse<Setlist>(r, router, "Setlists")));
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Failed to load history.");
+      setLists([]);
+    }
+  }, [filterBandId, router, venueId]);
 
   useEffect(() => { void loadLookups(); }, [loadLookups]);
   useEffect(() => { void loadLists(); }, [loadLists]);
