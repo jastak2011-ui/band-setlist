@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { lookupSongMetadata } from "@/lib/metadata-lookup";
 
 const body = z.object({
@@ -8,6 +9,8 @@ const body = z.object({
 });
 
 export async function POST(req: Request) {
+  try {
+  await requireUser();
   const json = await req.json();
   const parsed = body.safeParse(json);
   if (!parsed.success) {
@@ -30,4 +33,7 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json(result, { status: result.source === "none" ? 400 : 200 });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }

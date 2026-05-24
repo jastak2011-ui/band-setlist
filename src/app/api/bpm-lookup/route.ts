@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { lookupBpm } from "@/lib/bpm-lookup";
 
 const body = z.object({
@@ -8,11 +9,16 @@ const body = z.object({
 });
 
 export async function POST(req: Request) {
-  const json = await req.json();
-  const parsed = body.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  try {
+    await requireUser();
+    const json = await req.json();
+    const parsed = body.safeParse(json);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    }
+    const result = await lookupBpm(parsed.data.title, parsed.data.artist);
+    return NextResponse.json(result);
+  } catch (error) {
+    return authErrorResponse(error);
   }
-  const result = await lookupBpm(parsed.data.title, parsed.data.artist);
-  return NextResponse.json(result);
 }

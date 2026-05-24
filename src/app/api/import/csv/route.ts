@@ -1,6 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
 import Papa from "papaparse";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
@@ -43,11 +44,13 @@ const rowSchema = z.object({
 });
 
 export async function POST(req: Request) {
-  const text = await req.text();
-  const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
-  if (parsed.errors.length) {
-    return NextResponse.json({ error: parsed.errors.map((e) => e.message) }, { status: 400 });
-  }
+  try {
+    await requireUser();
+    const text = await req.text();
+    const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
+    if (parsed.errors.length) {
+      return NextResponse.json({ error: parsed.errors.map((e) => e.message) }, { status: 400 });
+    }
   const inserted: string[] = [];
 
   for (const raw of parsed.data) {
@@ -112,7 +115,10 @@ export async function POST(req: Request) {
     inserted.push(id);
   }
 
-  return NextResponse.json({ imported: inserted.length, ids: inserted });
+    return NextResponse.json({ imported: inserted.length, ids: inserted });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }
 
 

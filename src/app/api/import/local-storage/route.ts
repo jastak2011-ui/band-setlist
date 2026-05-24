@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireAdmin } from "@/lib/auth";
 import { transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
@@ -43,6 +44,8 @@ const body = z.object({
 });
 
 export async function POST(req: Request) {
+  try {
+  await requireAdmin();
   const json = await req.json();
   const parsed = body.safeParse(json);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
@@ -123,4 +126,7 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json({ imported: counts });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }

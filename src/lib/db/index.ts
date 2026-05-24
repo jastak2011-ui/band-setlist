@@ -131,6 +131,32 @@ async function bootstrapDatabase(db: Queryable) {
     CREATE INDEX IF NOT EXISTS idx_setlist_sets_list ON setlist_sets(setlist_id);
     CREATE INDEX IF NOT EXISTS idx_setlist_set_songs_set ON setlist_set_songs(set_id);
     CREATE INDEX IF NOT EXISTS idx_setlist_set_songs_song ON setlist_set_songs(song_id);
+
+    CREATE TABLE IF NOT EXISTS app_users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      last_seen_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS user_roles (
+      user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS band_memberships (
+      user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      band_id TEXT NOT NULL REFERENCES bands(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, band_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_band_memberships_band ON band_memberships(band_id);
   `);
 
   await addColumnIfMissing(db, "bands", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -152,6 +178,11 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "setlist_sets", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "app_users", "display_name", "TEXT");
+  await addColumnIfMissing(db, "app_users", "last_seen_at", "TIMESTAMPTZ");
+  await addColumnIfMissing(db, "app_users", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "user_roles", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "band_memberships", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
 }
 
 export type DbSong = {

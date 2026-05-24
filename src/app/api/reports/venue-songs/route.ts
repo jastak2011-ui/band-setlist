@@ -1,4 +1,5 @@
 ﻿import { NextResponse } from "next/server";
+import { authErrorResponse, getAccessibleBandIds, requireBandAccess, requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 type GroupTotalRow = {
@@ -21,9 +22,9 @@ type SongReportRow = {
   setlist_count: string;
 };
 
-function buildWhere(venueId: string | null, bandId: string | null) {
+function buildWhere(venueId: string | null, bandId: string | null, accessibleBandIds: string[] | null) {
   const clauses: string[] = [];
-  const params: string[] = [];
+  const params: unknown[] = [];
 
   if (venueId) {
     params.push(venueId);
@@ -37,6 +38,12 @@ function buildWhere(venueId: string | null, bandId: string | null) {
       params.push(bandId);
       clauses.push(`sl.band_id = $${params.length}`);
     }
+  } else if (accessibleBandIds !== null) {
+    if (accessibleBandIds.length === 0) clauses.push("FALSE");
+    else {
+      params.push(accessibleBandIds);
+      clauses.push(`sl.band_id = ANY($${params.length}::text[])`);
+    }
   }
 
   return {
@@ -46,10 +53,14 @@ function buildWhere(venueId: string | null, bandId: string | null) {
 }
 
 export async function GET(req: Request) {
+  try {
+  const user = await requireUser();
   const url = new URL(req.url);
   const venueId = url.searchParams.get("venueId");
   const bandId = url.searchParams.get("bandId");
-  const filters = buildWhere(venueId, bandId);
+  if (bandId === "__none" && user.role !== "admin") return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+  if (bandId && bandId !== "__none") await requireBandAccess(user, bandId);
+  const filters = buildWhere(venueId, bandId, await getAccessibleBandIds(user));
 
   const groupTotals = await query<GroupTotalRow>(
     `
@@ -147,4 +158,7 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({ bands: Array.from(bandMap.values()) });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }

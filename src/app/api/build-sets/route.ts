@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSong, querySongsByIds } from "@/lib/db";
 import { buildSets, type SongForSet } from "@/lib/set-builder";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
@@ -20,11 +21,15 @@ const body = z.object({
 });
 
 export async function POST(req: Request) {
-  const json = await req.json();
-  const parsed = body.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
+  try {
+    const user = await requireUser();
+    const json = await req.json();
+    const parsed = body.safeParse(json);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    }
+    if (parsed.data.bandId) await requireBandAccess(user, parsed.data.bandId);
+    if (parsed.data.venueId && !parsed.data.bandId && user.role !== "admin") return NextResponse.json({ error: "bandId required" }, { status: 400 });
 
   const rows = await querySongsByIds(parsed.data.songIds);
   if (rows.length === 0) {
@@ -92,4 +97,7 @@ export async function POST(req: Request) {
       })),
     })),
   });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }

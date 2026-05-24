@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { lookupSpotifySmartData } from "@/lib/spotify-smart-lookup";
 
 const body = z.object({
@@ -8,11 +9,13 @@ const body = z.object({
 });
 
 export async function POST(req: Request) {
-  const json = await req.json();
-  const parsed = body.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
+  try {
+    await requireUser();
+    const json = await req.json();
+    const parsed = body.safeParse(json);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    }
 
   console.info("Spotify smart lookup request", { title: parsed.data.title, artist: parsed.data.artist });
   const result = await lookupSpotifySmartData(parsed.data.title, parsed.data.artist);
@@ -29,6 +32,9 @@ export async function POST(req: Request) {
     message: result.message,
   });
   const status = result.source === "none" ? 400 : 200;
-  return NextResponse.json(result, { status });
+    return NextResponse.json(result, { status });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }
 

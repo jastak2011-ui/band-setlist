@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Link from "next/link";
+import { LogoutButton } from "./logout-button";
 
 export const metadata: Metadata = {
   title: "Band Setlist",
@@ -15,6 +16,7 @@ const nav = [
   { href: "/builder", label: "Set builder" },
   { href: "/history", label: "History" },
   { href: "/reports", label: "Reports" },
+  { href: "/admin", label: "Admin" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -36,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   {n.label}
                 </Link>
               ))}
+              <LogoutButton />
             </nav>
           </div>
         </header>

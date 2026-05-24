@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
+import { authErrorResponse, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
@@ -26,16 +27,23 @@ const songInput = z.object({
 });
 
 export async function GET() {
-  const result = await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)");
-  return NextResponse.json(result.rows.map(mapSong));
+  try {
+    await requireUser();
+    const result = await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)");
+    return NextResponse.json(result.rows.map(mapSong));
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }
 
 export async function POST(req: Request) {
-  const json = await req.json();
-  const parsed = songInput.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-  }
+  try {
+    await requireUser();
+    const json = await req.json();
+    const parsed = songInput.safeParse(json);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    }
 
   const v = parsed.data;
   const id = newId();
@@ -72,5 +80,8 @@ export async function POST(req: Request) {
       v.avoidAfter ?? null,
     ],
   );
-  return NextResponse.json(mapSong(result.rows[0]), { status: 201 });
+    return NextResponse.json(mapSong(result.rows[0]), { status: 201 });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
 }
