@@ -5,7 +5,18 @@ import Link from "next/link";
 
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string };
-type Setlist = { id: string; venueId: string; bandId: string | null; title: string | null; performedAt: string | null; createdAt: string; notes: string | null };
+type Setlist = {
+  id: string;
+  venueId: string;
+  bandId: string | null;
+  title: string | null;
+  performedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  notes: string | null;
+  setCount?: number;
+  songCount?: number;
+};
 
 function formatHistoryDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
@@ -20,6 +31,20 @@ function formatTitleDate(value: string) {
   const date = new Date(`${value}T12:00:00`);
   return date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
 }
+
+function sortHistoryLists(lists: Setlist[]) {
+  const time = (value: string | null | undefined) => value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
+  return [...lists].sort((a, b) => (
+    time(b.performedAt) - time(a.performedAt)
+    || time(b.updatedAt) - time(a.updatedAt)
+    || time(b.createdAt) - time(a.createdAt)
+  ));
+}
+
+function plural(value: number, label: string) {
+  return `${value} ${label}${value === 1 ? "" : "s"}`;
+}
+
 async function readErrorMessage(response: Response) {
   const text = await response.text();
   if (!text) return `Request failed (${response.status})`;
@@ -51,7 +76,7 @@ export default function HistoryPage() {
     if (filterBandId) params.set("bandId", filterBandId);
     const query = params.toString();
     const r = await fetch(`/api/setlists${query ? `?${query}` : ""}`);
-    setLists(await r.json());
+    setLists(sortHistoryLists(await r.json()));
   }, [filterBandId, venueId]);
 
   useEffect(() => { void loadLookups(); }, [loadLookups]);
@@ -77,7 +102,7 @@ export default function HistoryPage() {
       setMsg(await readErrorMessage(r));
       return;
     }
-    setLists((current) => current.map((row) => (row.id === list.id ? { ...row, bandId: bandId || null } : row)));
+    setLists((current) => sortHistoryLists(current.map((row) => (row.id === list.id ? { ...row, bandId: bandId || null } : row))));
     setMsg("Band assignment updated.");
   }
   async function updatePerformanceDate(list: Setlist, value: string) {
@@ -101,11 +126,12 @@ export default function HistoryPage() {
     }
     const detail = await r.json().catch(() => null);
     const updated = detail?.setlist;
-    setLists((current) => current.map((row) => (row.id === list.id ? {
+    setLists((current) => sortHistoryLists(current.map((row) => (row.id === list.id ? {
       ...row,
       title: updated?.title ?? nextTitle,
       performedAt: updated?.performedAt ?? new Date(nextPerformedAt).toISOString(),
-    } : row)));
+      updatedAt: updated?.updatedAt ?? new Date().toISOString(),
+    } : row))));
     setMsg("Performance date updated.");
   }
 
@@ -175,7 +201,10 @@ export default function HistoryPage() {
               <div className="min-w-64 flex-1">
                 <div className="font-medium">{displayTitle(l)}</div>
                 <div className="text-xs text-[var(--muted)]">
-                  {l.performedAt ? `Performance date: ${formatHistoryDate(l.performedAt)}` : `Created: ${new Date(l.createdAt).toLocaleString()}`} - {bandName} - {venueName}
+                  Performance date: {l.performedAt ? formatHistoryDate(l.performedAt) : "Not set"} &ndash; {bandName} &ndash; {venueName}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  {plural(l.setCount ?? (l.songCount ? 1 : 0), "set")} &bull; {plural(l.songCount ?? 0, "song")}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">

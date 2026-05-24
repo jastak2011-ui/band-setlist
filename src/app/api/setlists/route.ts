@@ -21,18 +21,38 @@ export async function GET(req: Request) {
 
   if (venueId) {
     params.push(venueId);
-    clauses.push(`venue_id = $${params.length}`);
+    clauses.push(`sl.venue_id = $${params.length}`);
   }
   if (bandId) {
     params.push(bandId);
-    clauses.push(`band_id = $${params.length}`);
+    clauses.push(`sl.band_id = $${params.length}`);
   }
 
   const result = await query(
-    `SELECT * FROM setlists ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY created_at DESC`,
+    `
+    SELECT
+      sl.*,
+      CASE
+        WHEN COUNT(DISTINCT ss.id) > 0 THEN COUNT(DISTINCT ss.id)
+        WHEN COUNT(sss.id) FILTER (WHERE s.id IS NULL OR NOT (s.title ~* '^\\s*set\\s*[0-9]+\\s*$')) > 0 THEN 1
+        ELSE 0
+      END AS set_count,
+      COUNT(sss.id) FILTER (WHERE s.id IS NULL OR NOT (s.title ~* '^\\s*set\\s*[0-9]+\\s*$')) AS song_count
+    FROM setlists sl
+    LEFT JOIN setlist_sets ss ON ss.setlist_id = sl.id
+    LEFT JOIN setlist_set_songs sss ON sss.set_id = ss.id
+    LEFT JOIN songs s ON s.id = sss.song_id
+    ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+    GROUP BY sl.id, sl.venue_id, sl.band_id, sl.title, sl.performed_at, sl.created_at, sl.updated_at, sl.notes
+    ORDER BY sl.performed_at DESC NULLS LAST, sl.updated_at DESC, sl.created_at DESC
+    `,
     params,
   );
-  return NextResponse.json(result.rows.map(mapSetlist));
+  return NextResponse.json(result.rows.map((row) => ({
+    ...mapSetlist(row),
+    setCount: Number(row.set_count ?? 0),
+    songCount: Number(row.song_count ?? 0),
+  })));
 }
 
 export async function POST(req: Request) {
