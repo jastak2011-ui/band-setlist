@@ -401,7 +401,11 @@ export default function BuilderPage() {
       return;
     }
 
-    setSongs((current) => [...current, created].sort((a, b) => a.title.localeCompare(b.title)));
+    const importStatus = (created as Song & { importStatus?: string }).importStatus;
+    setSongs((current) => {
+      const withoutExisting = current.filter((song) => song.id !== created.id);
+      return [...withoutExisting, created].sort((a, b) => a.title.localeCompare(b.title));
+    });
     setSelected((current) => new Set([...current, created.id]));
     setImportSummary((current) => current ? {
       ...current,
@@ -419,7 +423,7 @@ export default function BuilderPage() {
         .map((song, index) => ({ ...song, position: index + 1 }));
       return next;
     });
-    setMsg(`Added ${created.title} to the library and Set ${Math.min(importedSong.setIndex, clampSetCount(numSets))}.`);
+    setMsg(`${importStatus === "created" ? "Added" : "Reused"} ${created.title} ${importStatus === "updated" ? "and filled missing metadata " : ""}for Set ${Math.min(importedSong.setIndex, clampSetCount(numSets))}.`);
   }
   async function build() {
     setBusy(true);

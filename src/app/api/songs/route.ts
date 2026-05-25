@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
-import { newId } from "@/lib/ids";
+import { findOrCreateSong } from "@/lib/song-import";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value));
 
@@ -45,42 +45,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-  const v = parsed.data;
-  const id = newId();
-  const result = await query(
-    `
-    INSERT INTO songs (
-      id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
-      crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
-      lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-      $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
-    )
-    RETURNING *
-    `,
-    [
-      id,
-      v.title,
-      v.artist,
-      v.bpm ?? null,
-      v.musicalKey ?? null,
-      v.durationSec ?? null,
-      v.energy ?? null,
-      v.notes ?? null,
-      v.genre ?? null,
-      v.vibe ?? null,
-      v.crowdScore ?? null,
-      v.danceability ?? null,
-      v.vocalDifficulty ?? null,
-      v.openerCandidate ?? null,
-      v.closerCandidate ?? null,
-      v.leadSinger ?? null,
-      v.capoOrTuning ?? null,
-      v.avoidAfter ?? null,
-    ],
-  );
-    return NextResponse.json(mapSong(result.rows[0]), { status: 201 });
+    const result = await findOrCreateSong(parsed.data);
+    return NextResponse.json({ ...result.song, importStatus: result.status }, { status: result.status === "created" ? 201 : 200 });
   } catch (error) {
     return authErrorResponse(error);
   }

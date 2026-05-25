@@ -456,7 +456,9 @@ export default function SongsPage() {
     const data = await r.json();
     setCsvBusy(false);
     if (!r.ok) setMsg(data.error?.join?.() ?? JSON.stringify(data));
-    else setMsg(`Imported ${data.imported} rows`);
+    else {
+      setMsg(`Imported ${data.imported} rows: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped.`);
+    }
     await load();
   }
 
@@ -908,7 +910,6 @@ export default function SongsPage() {
     </div>
   );
 }
-
 
 
 
