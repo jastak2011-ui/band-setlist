@@ -90,11 +90,58 @@ const emptyForm: SongForm = {
   avoidAfter: "",
 };
 
+const csvImportTemplate = [
+  "title,artist,key,capo,bpm,duration,genre,notes,vibe,crowd_score,danceability,vocal_difficulty,opener_candidate,closer_candidate,lead_singer,capo_or_tuning,avoid_after",
+  "Example Song,Example Artist,G,,120,3:45,Rock,Notes,Upbeat,8,7,4,true,false,Lead Singer,,",
+].join("\n");
+
+const htmlImportTemplate = `<!doctype html>
+<html>
+  <body>
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Artist</th>
+          <th>Key</th>
+          <th>Capo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Example Song</td>
+          <td>Example Artist</td>
+          <td>G</td>
+          <td>2</td>
+        </tr>
+        <tr>
+          <td>SET 2</td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>`;
+
 function formatDuration(seconds: number | null) {
   if (seconds == null) return "-";
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function downloadTextTemplate(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function parseDuration(value: string) {
@@ -447,7 +494,7 @@ export default function SongsPage() {
     await load();
   }
 
-  async function importCsv(file: File | null) {
+  async function importSongLibrary(file: File | null) {
     if (!file) return;
     setCsvBusy(true);
     setMsg(null);
@@ -457,7 +504,8 @@ export default function SongsPage() {
     setCsvBusy(false);
     if (!r.ok) setMsg(data.error?.join?.() ?? JSON.stringify(data));
     else {
-      setMsg(`Imported ${data.imported} rows: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped.`);
+      const errorNote = data.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
+      setMsg(`${data.format ?? "File"} import complete: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped, ${data.skipped ?? 0} skipped.${errorNote}`);
     }
     await load();
   }
@@ -734,10 +782,41 @@ export default function SongsPage() {
           <button type="submit" className="btn btn-primary w-full">Save song</button>
         </form>
 
-        <div className="card space-y-3">
-          <h2 className="font-medium">Import CSV</h2>
-          <input type="file" accept=".csv,text/csv" disabled={csvBusy} onChange={(e) => void importCsv(e.target.files?.[0] ?? null)} className="text-sm text-[var(--muted)]" />
-          <p className="text-xs text-[var(--muted)]">Old CSV files still work. New smart builder columns are optional.</p>
+        <div className="card space-y-4">
+          <div>
+            <h2 className="font-medium">Import CSV or HTML</h2>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              CSV files and table-based HTML exports are supported. Existing songs are matched by normalized title and artist so importing the same file twice will reuse the library song.
+            </p>
+          </div>
+          <input
+            type="file"
+            accept=".csv,text/csv,.html,.htm,text/html"
+            disabled={csvBusy}
+            onChange={(e) => void importSongLibrary(e.target.files?.[0] ?? null)}
+            className="text-sm text-[var(--muted)]"
+          />
+          <div className="rounded-md border border-[var(--border)] bg-black/10 p-3 text-xs text-[var(--muted)]">
+            <p className="font-medium text-[var(--fg)]">CSV or HTML import supported</p>
+            <p className="mt-2">Required field: <span className="font-mono text-[var(--fg)]">title</span></p>
+            <p className="mt-1">
+              Optional fields: artist, key, capo, bpm, duration, energy, genre, notes, vibe, crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate, lead_singer, capo_or_tuning, avoid_after.
+            </p>
+            <p className="mt-2">Common aliases work too, including song, name, performer, musical_key, tempo, length, comments, style, and mood.</p>
+            <p className="mt-2">HTML imports should use a table with headers like Title, Artist, Key, and Capo. SET marker rows such as SET 2 or Set 3 are ignored.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <pre className="overflow-x-auto rounded border border-[var(--border)] bg-[var(--bg)] p-2">title,artist,key,bpm{"\n"}Example Song,Example Artist,G,120</pre>
+              <pre className="overflow-x-auto rounded border border-[var(--border)] bg-[var(--bg)] p-2">&lt;table&gt;{"\n"}  &lt;tr&gt;&lt;th&gt;Title&lt;/th&gt;&lt;th&gt;Artist&lt;/th&gt;&lt;/tr&gt;{"\n"}  &lt;tr&gt;&lt;td&gt;Example Song&lt;/td&gt;&lt;td&gt;Example Artist&lt;/td&gt;&lt;/tr&gt;{"\n"}&lt;/table&gt;</pre>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn" onClick={() => downloadTextTemplate("band-setlist-song-import-template.csv", csvImportTemplate, "text/csv")}>
+              Download CSV template
+            </button>
+            <button type="button" className="btn" onClick={() => downloadTextTemplate("band-setlist-song-import-template.html", htmlImportTemplate, "text/html")}>
+              Download HTML template
+            </button>
+          </div>
         </div>
       </div>
 
@@ -910,10 +989,6 @@ export default function SongsPage() {
     </div>
   );
 }
-
-
-
-
 
 
 

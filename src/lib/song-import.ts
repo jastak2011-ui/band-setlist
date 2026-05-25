@@ -48,8 +48,8 @@ export function normalizeSongIdentity(value: string) {
   return value
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’‘`´]/g, "")
-    .replace(/[“”]/g, "\"")
+    .replace(/[\u2018\u2019`'\u00b4]/g, "")
+    .replace(/[\u201c\u201d]/g, "\"")
     .replace(/&/g, " and ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .toLowerCase()
