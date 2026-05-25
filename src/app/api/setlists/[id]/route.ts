@@ -15,7 +15,16 @@ const patchBody = z.object({
 export const dynamic = "force-dynamic";
 
 async function getSetlistDetail(id: string) {
-  const listResult = await query("SELECT * FROM setlists WHERE id = $1", [id]);
+  const listResult = await query(
+    `
+    SELECT sl.*, v.name AS venue_name, b.name AS band_name
+    FROM setlists sl
+    JOIN venues v ON v.id = sl.venue_id
+    LEFT JOIN bands b ON b.id = sl.band_id
+    WHERE sl.id = $1
+    `,
+    [id],
+  );
   const list = listResult.rows[0];
   if (!list) return null;
 
@@ -32,7 +41,14 @@ async function getSetlistDetail(id: string) {
     outSets.push({ index: Number(set.set_index) + 1, songs: linkResult.rows.map((row) => songMap.get(row.song_id)).filter(Boolean) });
   }
 
-  return { setlist: mapSetlist(list), sets: outSets };
+  return {
+    setlist: {
+      ...mapSetlist(list),
+      venueName: list.venue_name as string,
+      bandName: (list.band_name as string | null) ?? null,
+    },
+    sets: outSets,
+  };
 }
 
 export async function GET(_req: Request, context: Params) {

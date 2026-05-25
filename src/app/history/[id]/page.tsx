@@ -4,6 +4,7 @@ import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
+import { PrintButton } from "@/app/print-button";
 
 type Song = {
   id: string;
@@ -12,6 +13,8 @@ type Song = {
   bpm: number | null;
   musicalKey: string | null;
   durationSec?: number | null;
+  notes?: string | null;
+  capoOrTuning?: string | null;
 };
 
 type ReplacementPrompt = {
@@ -25,7 +28,9 @@ type Detail = {
     createdAt: string;
     performedAt: string | null;
     venueId?: string | null;
+    venueName?: string | null;
     bandId?: string | null;
+    bandName?: string | null;
   };
   sets: { index: number; songs: Song[] }[];
 };
@@ -41,6 +46,12 @@ function formatDuration(seconds: number) {
 function totalDuration(songs: { durationSec?: number | null }[]) {
   return songs.reduce((sum, song) => sum + (song.durationSec ?? 0), 0);
 }
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "Not set";
+  return new Date(value).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+}
+
 function shuffleSongs<T>(items: T[]) {
   const shuffled = [...items];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -85,6 +96,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   const songMap = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
   const eventDuration = useMemo(() => totalDuration(sets.flatMap((set) => set.songs)), [sets]);
+  const songCount = useMemo(() => sets.reduce((sum, set) => sum + set.songs.length, 0), [sets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,7 +330,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-6">
-      <Link href="/history" className="text-sm text-[var(--accent)] hover:underline">
+      <Link href="/history" className="no-print text-sm text-[var(--accent)] hover:underline">
         Back to history
       </Link>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -326,12 +338,19 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           <h1 className="text-2xl font-semibold">{data.setlist.title || "Setlist"}</h1>
           <p className="text-sm text-[var(--muted)]">
             {data.setlist.performedAt
-              ? `Performance date: ${new Date(data.setlist.performedAt).toLocaleDateString()}`
+              ? `Performance date: ${formatDate(data.setlist.performedAt)}`
               : `Created: ${new Date(data.setlist.createdAt).toLocaleString()}`}
           </p>
+          <div className="print-only mt-2 text-sm">
+            <div>Band: {data.setlist.bandName ?? "No band assigned"}</div>
+            <div>Venue: {data.setlist.venueName ?? "Unknown venue"}</div>
+            <div>Performance date: {formatDate(data.setlist.performedAt)}</div>
+            <div>{sets.length} set{sets.length === 1 ? "" : "s"} - {songCount} song{songCount === 1 ? "" : "s"}</div>
+          </div>
           <p className="mono mt-1 text-xs text-[var(--muted)]">Total duration: {formatDuration(eventDuration)}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="no-print flex flex-wrap gap-2">
+          <PrintButton className="px-3 py-1 text-xs" />
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={reshuffleAll}>
             Reshuffle all
           </button>
@@ -344,19 +363,19 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
 
-      {msg && <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">{msg}</div>}
+      {msg && <div className="no-print rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">{msg}</div>}
 
       {sets.map((s) => {
         const setDuration = totalDuration(s.songs);
         return (
-        <div key={s.index} className="card">
+        <div key={s.index} className="card print-section">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-medium text-[var(--accent)]">Set {s.index} <span className="mono text-xs text-[var(--muted)]">- {formatDuration(setDuration)}</span></h2>
-            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => reshuffleSet(s.index)}>
+            <button type="button" className="btn btn-ghost no-print px-2 py-1 text-xs" onClick={() => reshuffleSet(s.index)}>
               Reshuffle set
             </button>
           </div>
-          <ol className="space-y-1 text-sm">
+          <ol className="no-print space-y-1 text-sm">
             {s.songs.map((song, songIndex) => {
               const usedIds = new Set(sets.flatMap((set) => set.songs.map((item) => item.id)));
               const promptIsOpen = replacementPrompt?.setIndex === s.index && replacementPrompt.songIndex === songIndex;
@@ -458,6 +477,30 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               );
             })}
           </ol>
+          <table className="print-only w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-left">
+                <th className="py-1 pr-2 font-medium">#</th>
+                <th className="py-1 pr-2 font-medium">Song</th>
+                <th className="py-1 pr-2 font-medium">Artist</th>
+                <th className="py-1 pr-2 font-medium">Key</th>
+                <th className="py-1 pr-2 font-medium">Capo / Tuning</th>
+                <th className="py-1 font-medium">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.songs.map((song, songIndex) => (
+                <tr key={`print-${s.index}-${song.id}-${songIndex}`} className="border-b border-[var(--border)]">
+                  <td className="py-1 pr-2 align-top">{songIndex + 1}</td>
+                  <td className="py-1 pr-2 align-top font-medium">{song.title}</td>
+                  <td className="py-1 pr-2 align-top">{song.artist}</td>
+                  <td className="py-1 pr-2 align-top">{song.musicalKey || ""}</td>
+                  <td className="py-1 pr-2 align-top">{song.capoOrTuning || ""}</td>
+                  <td className="py-1 align-top">{song.notes || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         );
       })}

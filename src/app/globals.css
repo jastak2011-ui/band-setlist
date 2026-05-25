@@ -64,3 +64,84 @@ body {
 .btn-ghost:hover {
   border-color: #3d4656;
 }
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 0.5in;
+  }
+
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --border: #cbd5e1;
+    --muted: #475569;
+    --text: #111827;
+    --accent: #111827;
+    --accent-dim: transparent;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  body {
+    min-height: auto;
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 11pt;
+    line-height: 1.35;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: revert !important;
+  }
+
+  .card {
+    border: 1px solid #cbd5e1 !important;
+    background: #ffffff !important;
+    border-radius: 0 !important;
+    padding: 12pt !important;
+  }
+
+  .print-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  table {
+    break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  a {
+    color: #111827 !important;
+    text-decoration: none !important;
+  }
+}

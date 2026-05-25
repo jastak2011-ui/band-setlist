@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
+import { PrintButton } from "@/app/print-button";
 
 type Venue = { id: string; name: string };
 type Band = { id: string; name: string };
@@ -40,6 +41,7 @@ export default function ReportsPage() {
   const [reports, setReports] = useState<BandReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<Date | null>(null);
 
   const selectedVenueName = useMemo(
     () => venues.find((venue) => venue.id === venueId)?.name ?? "All venues",
@@ -58,6 +60,15 @@ export default function ReportsPage() {
       }
     }
     return ids.size;
+  }, [reports]);
+  const summary = useMemo(() => {
+    const venueIds = new Set<string>();
+    let totalSetlists = 0;
+    for (const band of reports) {
+      totalSetlists += band.totalSetlists;
+      for (const venue of band.venues) venueIds.add(venue.id);
+    }
+    return { bandCount: reports.length, venueCount: venueIds.size, totalSetlists };
   }, [reports]);
 
   const loadFilters = useCallback(async () => {
@@ -86,6 +97,7 @@ export default function ReportsPage() {
       const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`, { cache: "no-store" });
       const json = await readObjectResponse<{ bands?: unknown }>(response, router, "Report");
       setReports(Array.isArray(json?.bands) ? json.bands as BandReport[] : []);
+      setGeneratedAt(new Date());
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "Failed to load report.");
       setReports([]);
@@ -109,7 +121,7 @@ export default function ReportsPage() {
           <h1 className="text-2xl font-semibold">Reports</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">See which songs show up most often by band and venue.</p>
         </div>
-        <div className="flex flex-wrap gap-3">
+        <div className="no-print flex flex-wrap items-end gap-3">
           <label className="block min-w-56 text-sm text-[var(--muted)]">
             Band
             <select className="input mt-1" value={bandId} onChange={(event) => setBandId(event.target.value)}>
@@ -128,10 +140,21 @@ export default function ReportsPage() {
               ))}
             </select>
           </label>
+          <PrintButton />
         </div>
       </div>
 
-      {msg && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{msg}</div>}
+      <section className="print-only space-y-1 border-b border-[var(--border)] pb-4">
+        <h2 className="text-xl font-semibold">Songs by Band and Venue</h2>
+        <div className="text-sm">Band filter: {selectedBandName}</div>
+        <div className="text-sm">Venue filter: {selectedVenueName}</div>
+        <div className="text-sm">Generated: {generatedAt ? generatedAt.toLocaleString() : new Date().toLocaleString()}</div>
+        <div className="text-sm">
+          {summary.bandCount} band{summary.bandCount === 1 ? "" : "s"} - {summary.venueCount} venue{summary.venueCount === 1 ? "" : "s"} - {summary.totalSetlists} setlist{summary.totalSetlists === 1 ? "" : "s"} - {uniqueSongCount} unique song{uniqueSongCount === 1 ? "" : "s"}
+        </div>
+      </section>
+
+      {msg && <div className="no-print rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{msg}</div>}
 
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -141,7 +164,7 @@ export default function ReportsPage() {
             {!loading && <div className="mono mt-1 text-xs text-[var(--muted)]">Unique songs: {uniqueSongCount}</div>}
           </div>
         </div>
-        <p className="mb-4 text-xs text-[var(--muted)]">
+        <p className="no-print mb-4 text-xs text-[var(--muted)]">
           Percent played is the share of saved setlists for that band at that venue that included the song at least once.
         </p>
 

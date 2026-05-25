@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="pb-16">
-        <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[#0c0f14]/90 backdrop-blur">
+        <header className="no-print sticky top-0 z-10 border-b border-[var(--border)] bg-[#0c0f14]/90 backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
             <Link href="/" className="text-lg font-semibold tracking-tight text-[var(--accent)]">
               Band Setlist
