@@ -40,6 +40,10 @@ function isConfiguredAdmin(email: string) {
   return adminEmails().includes(email.toLowerCase());
 }
 
+function shouldLogAuthDebug() {
+  return process.env.AUTH_DEBUG === "1" || process.env.NODE_ENV !== "production";
+}
+
 async function fetchSupabaseUser(accessToken: string) {
   const response = await fetch(`${supabaseUrl()}/auth/v1/user`, {
     headers: {
@@ -56,16 +60,17 @@ async function fetchSupabaseUser(accessToken: string) {
 }
 
 export async function syncSupabaseUser(authUser: { id: string; email: string }) {
+  const email = authUser.email.trim().toLowerCase();
   await query(
     `
     INSERT INTO app_users (id, email, last_seen_at, created_at, updated_at)
     VALUES ($1, $2, NOW(), NOW(), NOW())
     ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, last_seen_at = NOW(), updated_at = NOW()
     `,
-    [authUser.id, authUser.email],
+    [authUser.id, email],
   );
 
-  const configuredAdmin = isConfiguredAdmin(authUser.email);
+  const configuredAdmin = isConfiguredAdmin(email);
   await query(
     `
     INSERT INTO user_roles (user_id, role, created_at, updated_at)
@@ -77,9 +82,73 @@ export async function syncSupabaseUser(authUser: { id: string; email: string }) 
     [authUser.id, configuredAdmin ? "admin" : "member"],
   );
 
+  await reconcileEligibleInvitations(authUser.id, email);
+
   const roleResult = await query("SELECT role FROM user_roles WHERE user_id = $1", [authUser.id]);
   const role = roleResult.rows[0]?.role === "admin" ? "admin" : "member";
-  return { id: authUser.id, email: authUser.email, role } satisfies AuthUser;
+  if (shouldLogAuthDebug()) {
+    const memberships = await query("SELECT band_id FROM band_memberships WHERE user_id = $1 ORDER BY band_id", [authUser.id]);
+    console.info("auth user resolved", {
+      userId: authUser.id,
+      email,
+      role,
+      membershipCount: memberships.rows.length,
+      bandIds: memberships.rows.map((row) => row.band_id),
+    });
+  }
+  return { id: authUser.id, email, role } satisfies AuthUser;
+}
+
+async function reconcileEligibleInvitations(userId: string, email: string) {
+  const invitations = await query(
+    `
+    SELECT id, role
+    FROM invitations
+    WHERE lower(email) = lower($1)
+      AND (accepted_at IS NOT NULL OR expires_at > NOW())
+    ORDER BY accepted_at DESC, created_at DESC
+    `,
+    [email],
+  );
+  if (invitations.rows.length === 0) return;
+
+  const shouldBeAdmin = invitations.rows.some((row) => row.role === "admin") || isConfiguredAdmin(email);
+  await query(
+    `
+    INSERT INTO user_roles (user_id, role, created_at, updated_at)
+    VALUES ($1, $2, NOW(), NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+      role = CASE WHEN user_roles.role = 'admin' OR EXCLUDED.role = 'admin' THEN 'admin' ELSE user_roles.role END,
+      updated_at = NOW()
+    `,
+    [userId, shouldBeAdmin ? "admin" : "member"],
+  );
+
+  await query(
+    `
+    INSERT INTO band_memberships (user_id, band_id, created_at, updated_at)
+    SELECT $1, ib.band_id, NOW(), NOW()
+    FROM invitations i
+    JOIN invitation_bands ib ON ib.invitation_id = i.id
+    WHERE lower(i.email) = lower($2)
+      AND (i.accepted_at IS NOT NULL OR i.expires_at > NOW())
+    ON CONFLICT (user_id, band_id) DO UPDATE SET updated_at = NOW()
+    `,
+    [userId, email],
+  );
+  await query(
+    "UPDATE invitations SET accepted_at = COALESCE(accepted_at, NOW()) WHERE lower(email) = lower($1) AND expires_at > NOW()",
+    [email],
+  );
+
+  if (shouldLogAuthDebug()) {
+    console.info("eligible invitations reconciled", {
+      userId,
+      email,
+      invitationIds: invitations.rows.map((row) => row.id),
+      shouldBeAdmin,
+    });
+  }
 }
 
 export async function getCurrentUser() {
@@ -105,7 +174,11 @@ export async function requireAdmin() {
 export async function getAccessibleBandIds(user: AuthUser) {
   if (user.role === "admin") return null;
   const result = await query("SELECT band_id FROM band_memberships WHERE user_id = $1", [user.id]);
-  return result.rows.map((row) => row.band_id as string);
+  const bandIds = result.rows.map((row) => row.band_id as string);
+  if (shouldLogAuthDebug()) {
+    console.info("accessible bands resolved", { userId: user.id, email: user.email, role: user.role, bandIds });
+  }
+  return bandIds;
 }
 
 export async function canAccessBand(user: AuthUser, bandId: string | null | undefined) {
