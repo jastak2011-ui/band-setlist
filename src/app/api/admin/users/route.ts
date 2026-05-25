@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { authErrorResponse, privateJson, requireAdmin } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 
 const membershipBody = z.object({
   userId: z.string().min(1),
@@ -76,7 +76,22 @@ export async function DELETE(req: Request) {
     const userId = url.searchParams.get("userId");
     const bandId = url.searchParams.get("bandId");
     if (!userId || !bandId) return privateJson({ error: "userId and bandId are required" }, { status: 400 });
-    await query("DELETE FROM band_memberships WHERE user_id = $1 AND band_id = $2", [userId, bandId]);
+    await transaction(async (client) => {
+      const user = await client.query("SELECT email FROM app_users WHERE id = $1", [userId]);
+      await client.query("DELETE FROM band_memberships WHERE user_id = $1 AND band_id = $2", [userId, bandId]);
+      if (user.rows[0]?.email) {
+        await client.query(
+          `
+          DELETE FROM invitation_bands ib
+          USING invitations i
+          WHERE ib.invitation_id = i.id
+            AND lower(i.email) = lower($1)
+            AND ib.band_id = $2
+          `,
+          [user.rows[0].email, bandId],
+        );
+      }
+    });
     return privateJson({ ok: true });
   } catch (error) {
     return authErrorResponse(error);

@@ -110,7 +110,8 @@ async function reconcileEligibleInvitations(userId: string, email: string) {
     SELECT id, role
     FROM invitations
     WHERE lower(email) = lower($1)
-      AND (accepted_at IS NOT NULL OR expires_at > NOW())
+      AND accepted_at IS NULL
+      AND expires_at > NOW()
     ORDER BY accepted_at DESC, created_at DESC
     `,
     [email],
@@ -137,7 +138,8 @@ async function reconcileEligibleInvitations(userId: string, email: string) {
     FROM invitations i
     JOIN invitation_bands ib ON ib.invitation_id = i.id
     WHERE lower(i.email) = lower($1)
-      AND (i.accepted_at IS NOT NULL OR i.expires_at > NOW())
+      AND i.accepted_at IS NULL
+      AND i.expires_at > NOW()
     `,
     [email],
   );
@@ -221,5 +223,6 @@ export function authErrorResponse(error: unknown) {
 export function privateJson(body: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+  headers.set("Vary", "Cookie");
   return NextResponse.json(body, { ...init, headers });
 }

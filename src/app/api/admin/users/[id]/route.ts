@@ -37,6 +37,15 @@ export async function DELETE(_req: Request, context: Params) {
     }
 
     await transaction(async (client) => {
+      await client.query(
+        `
+        DELETE FROM invitation_bands ib
+        USING invitations i
+        WHERE ib.invitation_id = i.id
+          AND lower(i.email) = lower($1)
+        `,
+        [user.email],
+      );
       await client.query("DELETE FROM band_memberships WHERE user_id = $1", [id]);
       await client.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
       await client.query("UPDATE app_users SET disabled_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
