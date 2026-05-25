@@ -112,7 +112,9 @@ async function reconcileEligibleInvitations(userId: string, email: string) {
   );
   if (invitations.rows.length === 0) return;
 
-  const shouldBeAdmin = invitations.rows.some((row) => row.role === "admin") || isConfiguredAdmin(email);
+  const inviteRoles = new Set(invitations.rows.map((row) => row.role as AppRole));
+  const invitationIds = Array.from(new Set(invitations.rows.map((row) => row.id as string)));
+  const shouldBeAdmin = inviteRoles.has("admin") || isConfiguredAdmin(email);
   await query(
     `
     INSERT INTO user_roles (user_id, role, created_at, updated_at)
@@ -124,18 +126,28 @@ async function reconcileEligibleInvitations(userId: string, email: string) {
     [userId, shouldBeAdmin ? "admin" : "member"],
   );
 
-  await query(
+  const bandResult = await query(
     `
-    INSERT INTO band_memberships (user_id, band_id, created_at, updated_at)
-    SELECT $1, ib.band_id, NOW(), NOW()
+    SELECT DISTINCT ib.band_id
     FROM invitations i
     JOIN invitation_bands ib ON ib.invitation_id = i.id
-    WHERE lower(i.email) = lower($2)
+    WHERE lower(i.email) = lower($1)
       AND (i.accepted_at IS NOT NULL OR i.expires_at > NOW())
-    ON CONFLICT (user_id, band_id) DO UPDATE SET updated_at = NOW()
     `,
-    [userId, email],
+    [email],
   );
+  const bandIds = Array.from(new Set(bandResult.rows.map((row) => row.band_id as string).filter(Boolean)));
+  for (const bandId of bandIds) {
+    await query(
+      `
+      INSERT INTO band_memberships (user_id, band_id, created_at, updated_at)
+      VALUES ($1, $2, NOW(), NOW())
+      ON CONFLICT (user_id, band_id) DO UPDATE SET updated_at = NOW()
+      `,
+      [userId, bandId],
+    );
+  }
+
   await query(
     "UPDATE invitations SET accepted_at = COALESCE(accepted_at, NOW()) WHERE lower(email) = lower($1) AND expires_at > NOW()",
     [email],
@@ -145,7 +157,8 @@ async function reconcileEligibleInvitations(userId: string, email: string) {
     console.info("eligible invitations reconciled", {
       userId,
       email,
-      invitationIds: invitations.rows.map((row) => row.id),
+      invitationIds,
+      bandIds,
       shouldBeAdmin,
     });
   }
