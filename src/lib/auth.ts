@@ -70,6 +70,11 @@ export async function syncSupabaseUser(authUser: { id: string; email: string }) 
     [authUser.id, email],
   );
 
+  const activeResult = await query("SELECT disabled_at FROM app_users WHERE id = $1", [authUser.id]);
+  if (activeResult.rows[0]?.disabled_at) {
+    throw new AuthError("This user no longer has access to Band Setlist.", 403);
+  }
+
   const configuredAdmin = isConfiguredAdmin(email);
   await query(
     `

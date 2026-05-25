@@ -18,6 +18,7 @@ type Invitation = {
 };
 
 export default function AdminPage() {
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [bands, setBands] = useState<Band[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
@@ -26,16 +27,21 @@ export default function AdminPage() {
   const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
   const [inviteBandIds, setInviteBandIds] = useState<Set<string>>(new Set());
   const [pendingBandByUser, setPendingBandByUser] = useState<Record<string, string>>({});
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [response, inviteResponse] = await Promise.all([fetch("/api/admin/users"), fetch("/api/admin/invitations")]);
+    const [response, inviteResponse] = await Promise.all([
+      fetch("/api/admin/users", { cache: "no-store" }),
+      fetch("/api/admin/invitations", { cache: "no-store" }),
+    ]);
     const data = await response.json();
     if (!response.ok) {
       setMsg(data?.error ?? "Admin access required.");
       return;
     }
     const inviteData = await inviteResponse.json().catch(() => null);
+    setCurrentUserId(data.currentUserId ?? null);
     setUsers(data.users ?? []);
     setBands(data.bands ?? []);
     setMemberships(data.memberships ?? []);
@@ -72,13 +78,45 @@ export default function AdminPage() {
   }
 
   async function removeMembership(userId: string, bandId: string) {
-    const response = await fetch(`/api/admin/users?userId=${encodeURIComponent(userId)}&bandId=${encodeURIComponent(bandId)}`, { method: "DELETE" });
+    setBusyAction(`band:${userId}:${bandId}`);
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/bands/${encodeURIComponent(bandId)}`, { method: "DELETE" });
+    setBusyAction(null);
     if (!response.ok) {
       const data = await response.json().catch(() => null);
       setMsg(data?.error ?? "Could not remove band access.");
       return;
     }
     await load();
+  }
+
+  async function removeUser(user: User) {
+    if (user.id === currentUserId) {
+      setMsg("You cannot remove your own admin account.");
+      return;
+    }
+    if (!confirm(`Remove ${user.email} from Band Setlist? This removes their roles and band access, but keeps songs, venues, setlists, and history.`)) return;
+    setBusyAction(`user:${user.id}`);
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+    setBusyAction(null);
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMsg(data?.error ?? "Could not remove user.");
+      return;
+    }
+    setMsg(`${user.email} was removed from app access.`);
+    await load();
+  }
+
+  async function sendPasswordReset(user: User) {
+    setBusyAction(`reset:${user.id}`);
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/password-reset`, { method: "POST" });
+    setBusyAction(null);
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMsg(data?.error ?? "Could not send password reset.");
+      return;
+    }
+    setMsg(data?.message ?? `Password reset email sent to ${user.email}.`);
   }
 
   async function createInvite(event: React.FormEvent) {
@@ -198,6 +236,7 @@ export default function AdminPage() {
         {users.map((user) => {
           const assigned = membershipMap.get(user.id) ?? new Set<string>();
           const availableBands = bands.filter((band) => !assigned.has(band.id));
+          const isSelf = user.id === currentUserId;
           return (
             <section key={user.id} className="card space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -205,15 +244,43 @@ export default function AdminPage() {
                   <div className="font-medium">{user.email}</div>
                   <div className="text-xs text-[var(--muted)]">{user.role}{user.lastSeenAt ? ` - last seen ${new Date(user.lastSeenAt).toLocaleString()}` : ""}</div>
                 </div>
-                {user.role === "admin" && <span className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-200">All bands</span>}
+                <div className="flex flex-wrap items-center gap-2">
+                  {user.role === "admin" && <span className="rounded border border-emerald-500/30 px-2 py-1 text-xs text-emerald-200">All bands</span>}
+                  {isSelf && <span className="rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">You</span>}
+                  <button
+                    type="button"
+                    className="btn btn-ghost px-3 py-1 text-xs"
+                    disabled={busyAction === `reset:${user.id}`}
+                    onClick={() => void sendPasswordReset(user)}
+                  >
+                    {busyAction === `reset:${user.id}` ? "Sending..." : "Send password reset"}
+                  </button>
+                  {user.role !== "admin" && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost px-3 py-1 text-xs text-rose-300"
+                      disabled={busyAction === `user:${user.id}`}
+                      onClick={() => void removeUser(user)}
+                    >
+                      {busyAction === `user:${user.id}` ? "Removing..." : "Remove user"}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {user.role !== "admin" && (
                 <>
                   <div className="flex flex-wrap gap-2">
                     {Array.from(assigned).map((bandId) => (
-                      <button key={bandId} type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => void removeMembership(user.id, bandId)}>
-                        {bandMap.get(bandId)?.name ?? bandId} x
+                      <button
+                        key={bandId}
+                        type="button"
+                        className="btn btn-ghost px-2 py-1 text-xs"
+                        disabled={busyAction === `band:${user.id}:${bandId}`}
+                        title={`Remove access to ${bandMap.get(bandId)?.name ?? bandId}`}
+                        onClick={() => void removeMembership(user.id, bandId)}
+                      >
+                        {bandMap.get(bandId)?.name ?? bandId} <span className="text-rose-300">x</span>
                       </button>
                     ))}
                     {assigned.size === 0 && <span className="text-xs text-[var(--muted)]">No band access yet.</span>}

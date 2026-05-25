@@ -136,6 +136,7 @@ async function bootstrapDatabase(db: Queryable) {
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       display_name TEXT,
+      disabled_at TIMESTAMPTZ,
       last_seen_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -200,6 +201,7 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "setlist_set_songs", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "app_users", "display_name", "TEXT");
+  await addColumnIfMissing(db, "app_users", "disabled_at", "TIMESTAMPTZ");
   await addColumnIfMissing(db, "app_users", "last_seen_at", "TIMESTAMPTZ");
   await addColumnIfMissing(db, "app_users", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "user_roles", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");

@@ -1,6 +1,5 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authErrorResponse, requireAdmin } from "@/lib/auth";
+import { authErrorResponse, privateJson, requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 const membershipBody = z.object({
@@ -8,20 +7,30 @@ const membershipBody = z.object({
   bandId: z.string().min(1),
 });
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
-    await requireAdmin();
+    const admin = await requireAdmin();
     const [users, bands, memberships] = await Promise.all([
       query(`
         SELECT u.id, u.email, u.display_name, COALESCE(r.role, 'member') AS role, u.last_seen_at, u.created_at, u.updated_at
         FROM app_users u
         LEFT JOIN user_roles r ON r.user_id = u.id
+        WHERE u.disabled_at IS NULL
         ORDER BY lower(u.email)
       `),
       query("SELECT id, name FROM bands ORDER BY lower(name)"),
-      query("SELECT user_id, band_id FROM band_memberships ORDER BY user_id, band_id"),
+      query(`
+        SELECT bm.user_id, bm.band_id
+        FROM band_memberships bm
+        JOIN app_users u ON u.id = bm.user_id
+        WHERE u.disabled_at IS NULL
+        ORDER BY bm.user_id, bm.band_id
+      `),
     ]);
-    return NextResponse.json({
+    return privateJson({
+      currentUserId: admin.id,
       users: users.rows.map((row) => ({
         id: row.id,
         email: row.email,
@@ -43,7 +52,9 @@ export async function POST(req: Request) {
   try {
     await requireAdmin();
     const parsed = membershipBody.safeParse(await req.json());
-    if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    if (!parsed.success) return privateJson({ error: parsed.error.flatten() }, { status: 400 });
+    const user = await query("SELECT id, disabled_at FROM app_users WHERE id = $1", [parsed.data.userId]);
+    if (!user.rows[0] || user.rows[0].disabled_at) return privateJson({ error: "User not found." }, { status: 404 });
     await query(
       `
       INSERT INTO band_memberships (user_id, band_id, created_at, updated_at)
@@ -52,7 +63,7 @@ export async function POST(req: Request) {
       `,
       [parsed.data.userId, parsed.data.bandId],
     );
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
     return authErrorResponse(error);
   }
@@ -64,11 +75,10 @@ export async function DELETE(req: Request) {
     const url = new URL(req.url);
     const userId = url.searchParams.get("userId");
     const bandId = url.searchParams.get("bandId");
-    if (!userId || !bandId) return NextResponse.json({ error: "userId and bandId are required" }, { status: 400 });
+    if (!userId || !bandId) return privateJson({ error: "userId and bandId are required" }, { status: 400 });
     await query("DELETE FROM band_memberships WHERE user_id = $1 AND band_id = $2", [userId, bandId]);
-    return NextResponse.json({ ok: true });
+    return privateJson({ ok: true });
   } catch (error) {
     return authErrorResponse(error);
   }
 }
-
