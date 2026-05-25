@@ -2,39 +2,19 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ACCESS_COOKIE, REFRESH_COOKIE, syncSupabaseUser } from "@/lib/auth";
+import { loginWithPassword } from "@/lib/supabase-auth";
 
 const body = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
 
-function supabaseUrl() {
-  const value = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  if (!value) throw new Error("Supabase URL is not configured.");
-  return value.replace(/\/$/, "");
-}
-
-function supabaseAnonKey() {
-  const value = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!value) throw new Error("Supabase anon key is not configured.");
-  return value;
-}
-
 export async function POST(req: Request) {
   try {
     const parsed = body.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "Enter a valid email and password." }, { status: 400 });
 
-    const response = await fetch(`${supabaseUrl()}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        apikey: supabaseAnonKey(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(parsed.data),
-      cache: "no-store",
-    });
-    const data = await response.json().catch(() => null);
+    const { response, data } = await loginWithPassword(parsed.data.email, parsed.data.password);
     if (!response.ok || !data?.access_token) {
       return NextResponse.json({ error: data?.error_description || data?.msg || "Login failed." }, { status: 401 });
     }

@@ -5,24 +5,41 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type User = { id: string; email: string; role: "admin" | "member"; lastSeenAt: string | null };
 type Band = { id: string; name: string };
 type Membership = { userId: string; bandId: string };
+type Invitation = {
+  id: string;
+  email: string;
+  role: "admin" | "member";
+  inviteUrl: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  createdAt: string;
+  status: "pending" | "accepted" | "expired";
+  bands: Band[];
+};
 
 export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [bands, setBands] = useState<Band[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [inviteBandIds, setInviteBandIds] = useState<Set<string>>(new Set());
   const [pendingBandByUser, setPendingBandByUser] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/admin/users");
+    const [response, inviteResponse] = await Promise.all([fetch("/api/admin/users"), fetch("/api/admin/invitations")]);
     const data = await response.json();
     if (!response.ok) {
       setMsg(data?.error ?? "Admin access required.");
       return;
     }
+    const inviteData = await inviteResponse.json().catch(() => null);
     setUsers(data.users ?? []);
     setBands(data.bands ?? []);
     setMemberships(data.memberships ?? []);
+    setInvitations(Array.isArray(inviteData?.invitations) ? inviteData.invitations : []);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -64,6 +81,55 @@ export default function AdminPage() {
     await load();
   }
 
+  async function createInvite(event: React.FormEvent) {
+    event.preventDefault();
+    setMsg(null);
+    const response = await fetch("/api/admin/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: inviteEmail, role: inviteRole, bandIds: Array.from(inviteBandIds) }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMsg(data?.error ? JSON.stringify(data.error) : "Could not create invitation.");
+      return;
+    }
+    setInviteEmail("");
+    setInviteRole("member");
+    setInviteBandIds(new Set());
+    setInvitations(Array.isArray(data?.invitations) ? data.invitations : []);
+    setMsg(`Invitation created: ${data?.inviteUrl ?? "copy the pending link below"}`);
+  }
+
+  function toggleInviteBand(bandId: string) {
+    setInviteBandIds((current) => {
+      const next = new Set(current);
+      if (next.has(bandId)) next.delete(bandId);
+      else next.add(bandId);
+      return next;
+    });
+  }
+
+  async function copyInvite(link: string) {
+    await navigator.clipboard.writeText(link);
+    setMsg("Invite link copied.");
+  }
+
+  async function refreshInvite(id: string) {
+    const response = await fetch("/api/admin/invitations", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setMsg(data?.error ? JSON.stringify(data.error) : "Could not refresh invite.");
+      return;
+    }
+    setInvitations(Array.isArray(data?.invitations) ? data.invitations : []);
+    setMsg(`New invite link ready: ${data?.inviteUrl ?? "copy it below"}`);
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -72,6 +138,61 @@ export default function AdminPage() {
       </div>
 
       {msg && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">{msg}</div>}
+
+      <section className="card space-y-4">
+        <div>
+          <h2 className="font-medium text-[var(--accent)]">Invite tester</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">Create a private signup link and grant band access before they join.</p>
+        </div>
+        <form className="grid gap-3 lg:grid-cols-[1.2fr_.7fr_1.4fr_auto]" onSubmit={createInvite}>
+          <label className="block text-sm text-[var(--muted)]">
+            Email
+            <input className="input mt-1" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required />
+          </label>
+          <label className="block text-sm text-[var(--muted)]">
+            Role
+            <select className="input mt-1" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as "member" | "admin")}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <div className="text-sm text-[var(--muted)]">
+            Bands
+            <div className="mt-1 flex min-h-10 flex-wrap gap-2 rounded-lg border border-[var(--border)] bg-[#0f131a] px-2 py-2">
+              {bands.map((band) => (
+                <label key={band.id} className="flex items-center gap-1 text-xs text-[var(--text)]">
+                  <input type="checkbox" checked={inviteBandIds.has(band.id)} onChange={() => toggleInviteBand(band.id)} />
+                  {band.name}
+                </label>
+              ))}
+              {bands.length === 0 && <span className="text-xs">No bands yet.</span>}
+            </div>
+          </div>
+          <button type="submit" className="btn btn-primary self-end">Create invite</button>
+        </form>
+      </section>
+
+      <section className="card space-y-3">
+        <h2 className="font-medium text-[var(--accent)]">Invitations</h2>
+        {invitations.map((invite) => (
+          <div key={invite.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2">
+            <div>
+              <div className="font-medium">{invite.email}</div>
+              <div className="text-xs text-[var(--muted)]">
+                {invite.role} - {invite.status} - expires {new Date(invite.expiresAt).toLocaleDateString()}
+              </div>
+              <div className="mt-1 text-xs text-[var(--muted)]">
+                {invite.role === "admin" ? "All bands" : invite.bands.map((band) => band.name).join(", ") || "No bands"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => void copyInvite(invite.inviteUrl)}>Copy link</button>
+              <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => void refreshInvite(invite.id)}>Resend link</button>
+            </div>
+          </div>
+        ))}
+        {invitations.length === 0 && <div className="text-sm text-[var(--muted)]">No invitations yet.</div>}
+      </section>
 
       <div className="space-y-3">
         {users.map((user) => {
@@ -114,4 +235,3 @@ export default function AdminPage() {
     </div>
   );
 }
-

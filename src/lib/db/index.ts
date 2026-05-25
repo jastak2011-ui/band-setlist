@@ -157,6 +157,27 @@ async function bootstrapDatabase(db: Queryable) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_band_memberships_band ON band_memberships(band_id);
+
+    CREATE TABLE IF NOT EXISTS invitations (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+      invited_by TEXT REFERENCES app_users(id) ON DELETE SET NULL,
+      token TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS invitation_bands (
+      invitation_id TEXT NOT NULL REFERENCES invitations(id) ON DELETE CASCADE,
+      band_id TEXT NOT NULL REFERENCES bands(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (invitation_id, band_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
+    CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(lower(email));
   `);
 
   await addColumnIfMissing(db, "bands", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -183,6 +204,7 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "app_users", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "user_roles", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "band_memberships", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "invitations", "accepted_at", "TIMESTAMPTZ");
 }
 
 export type DbSong = {

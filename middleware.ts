@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ACCESS_COOKIE } from "@/lib/auth-cookies";
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/invite"];
 const PUBLIC_API_PATHS = ["/api/auth/login", "/api/auth/logout", "/api/auth/me"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isPublicPage = PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
-  const isPublicApi = PUBLIC_API_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const isPublicApi = PUBLIC_API_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`)) || pathname.startsWith("/api/invitations/");
   const isAsset = pathname.startsWith("/_next/") || pathname === "/favicon.ico" || /\.[a-zA-Z0-9]+$/.test(pathname);
   const hasSession = Boolean(req.cookies.get(ACCESS_COOKIE)?.value);
 
