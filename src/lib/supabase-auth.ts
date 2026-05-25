@@ -13,14 +13,21 @@ export function supabaseAnonKey() {
   return value;
 }
 
-export async function signUpWithPassword(email: string, password: string) {
-  const response = await fetch(`${supabaseUrl()}/auth/v1/signup`, {
+export function appLoginRedirectUrl() {
+  const value = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL;
+  return `${(value || "").replace(/\/$/, "")}/login`;
+}
+
+export async function signUpWithPassword(email: string, password: string, emailRedirectTo?: string) {
+  const url = new URL(`${supabaseUrl()}/auth/v1/signup`);
+  if (emailRedirectTo) url.searchParams.set("redirect_to", emailRedirectTo);
+  const response = await fetch(url.toString(), {
     method: "POST",
     headers: {
       apikey: supabaseAnonKey(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, options: emailRedirectTo ? { emailRedirectTo } : undefined }),
     cache: "no-store",
   });
   const data = await response.json().catch(() => null);
@@ -63,4 +70,3 @@ export async function setSupabaseSessionCookies(data: { access_token?: string; r
   }
   return true;
 }
-

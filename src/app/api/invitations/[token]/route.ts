@@ -2,13 +2,24 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { syncSupabaseUser } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
-import { loginWithPassword, setSupabaseSessionCookies, signUpWithPassword } from "@/lib/supabase-auth";
+import { appLoginRedirectUrl, setSupabaseSessionCookies, signUpWithPassword } from "@/lib/supabase-auth";
 
 type Params = { params: Promise<{ token: string }> };
 
 const acceptBody = z.object({
   password: z.string().min(8),
 });
+
+function isExistingAccountResponse(data: unknown) {
+  const payload = data as { msg?: string; message?: string; error_description?: string; user?: { identities?: unknown[] } } | null;
+  const message = `${payload?.msg ?? ""} ${payload?.message ?? ""} ${payload?.error_description ?? ""}`.toLowerCase();
+  return (
+    message.includes("already registered")
+    || message.includes("already exists")
+    || message.includes("user already")
+    || (Array.isArray(payload?.user?.identities) && payload.user.identities.length === 0)
+  );
+}
 
 function inviteStatus(invitation: { accepted_at: Date | null; expires_at: Date }) {
   if (invitation.accepted_at) return "accepted";
@@ -96,23 +107,31 @@ export async function POST(req: Request, context: Params) {
   const parsed = acceptBody.safeParse(await req.json());
   if (!parsed.success) return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
 
-  const signup = await signUpWithPassword(invitation.email, parsed.data.password);
-  let authData = signup.data;
-  let authResponse = signup.response;
+  const signup = await signUpWithPassword(invitation.email, parsed.data.password, appLoginRedirectUrl());
+  const authData = signup.data;
 
-  if (!authResponse.ok) {
-    const login = await loginWithPassword(invitation.email, parsed.data.password);
-    authData = login.data;
-    authResponse = login.response;
+  if (!signup.response.ok || isExistingAccountResponse(authData)) {
+    if (isExistingAccountResponse(authData)) {
+      return NextResponse.json({ error: "This account already exists. Please log in instead." }, { status: 409 });
+    }
+    return NextResponse.json({ error: authData?.error_description || authData?.msg || "Could not create this account." }, { status: 400 });
   }
 
-  if (!authResponse.ok || !authData?.user?.id || !authData?.user?.email) {
-    return NextResponse.json({ error: authData?.error_description || authData?.msg || "Could not create or log in this account." }, { status: 400 });
+  if (!authData?.user?.id || !authData?.user?.email) {
+    return NextResponse.json({ error: "Supabase did not return a new user." }, { status: 400 });
   }
 
   const email = String(authData.user.email).toLowerCase();
   if (email !== invitation.email.toLowerCase()) {
     return NextResponse.json({ error: "This account email does not match the invitation." }, { status: 403 });
+  }
+
+  if (!authData.access_token) {
+    return NextResponse.json({
+      ok: true,
+      signedIn: false,
+      message: "Account created. Please check your email to confirm your account, then log in.",
+    });
   }
 
   const user = await syncSupabaseUser({ id: String(authData.user.id), email });
@@ -122,6 +141,6 @@ export async function POST(req: Request, context: Params) {
   return NextResponse.json({
     ok: true,
     signedIn,
-    message: signedIn ? "Invitation accepted." : "Invitation accepted. Check your email to confirm your account, then log in.",
+    message: signedIn ? "Invitation accepted." : "Account created. Please check your email to confirm your account, then log in.",
   });
 }
