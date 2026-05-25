@@ -69,7 +69,10 @@ export default function HistoryPage() {
 
   const loadLookups = useCallback(async () => {
     try {
-      const [br, vr] = await Promise.all([fetch("/api/bands"), fetch("/api/venues")]);
+      const [br, vr] = await Promise.all([
+        fetch("/api/bands", { cache: "no-store" }),
+        fetch("/api/venues", { cache: "no-store" }),
+      ]);
       setBands(await readArrayResponse<Band>(br, router, "Bands"));
       setVenues(await readArrayResponse<Venue>(vr, router, "Venues"));
     } catch (error) {
@@ -85,7 +88,7 @@ export default function HistoryPage() {
     if (filterBandId) params.set("bandId", filterBandId);
     const query = params.toString();
     try {
-      const r = await fetch(`/api/setlists${query ? `?${query}` : ""}`);
+      const r = await fetch(`/api/setlists${query ? `?${query}` : ""}`, { cache: "no-store" });
       setLists(sortHistoryLists(await readArrayResponse<Setlist>(r, router, "Setlists")));
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "Failed to load history.");

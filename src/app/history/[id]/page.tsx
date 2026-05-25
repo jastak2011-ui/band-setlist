@@ -89,7 +89,10 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [detailResponse, songsResponse] = await Promise.all([fetch(`/api/setlists/${id}`), fetch("/api/songs")]);
+      const [detailResponse, songsResponse] = await Promise.all([
+        fetch(`/api/setlists/${id}`, { cache: "no-store" }),
+        fetch("/api/songs", { cache: "no-store" }),
+      ]);
       const detailJson = await readObjectResponse<Detail>(detailResponse, router, "Setlist detail").catch((error) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load setlist.");
         return null;
@@ -124,7 +127,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     void (async () => {
       const params = new URLSearchParams({ venueId: data.setlist.venueId ?? "", seed: String(Date.now()) });
       if (data.setlist.bandId) params.set("bandId", data.setlist.bandId);
-      const response = await fetch(`/api/recommendations?${params.toString()}`);
+      const response = await fetch(`/api/recommendations?${params.toString()}`, { cache: "no-store" });
       const json = await readObjectResponse<{ ranked?: unknown }>(response, router, "Recommendations").catch(() => null);
       if (!cancelled && Array.isArray(json?.ranked)) {
         setRecommendedSongs(json.ranked);

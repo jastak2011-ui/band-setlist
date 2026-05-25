@@ -383,7 +383,7 @@ export default function SongsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/songs");
+      const r = await fetch("/api/songs", { cache: "no-store" });
       setSongs(await readArrayResponse<Song>(r, router, "Songs"));
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "Failed to load songs.");
@@ -908,7 +908,6 @@ export default function SongsPage() {
     </div>
   );
 }
-
 
 
 

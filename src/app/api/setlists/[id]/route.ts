@@ -1,7 +1,6 @@
-﻿import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authErrorResponse, requireBandAccess, requireUser } from "@/lib/auth";
-import { mapSetlist, mapSong, query, querySongsByIds, transaction } from "@/lib/db";
+import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
+import { mapSetlist, query, querySongsByIds, transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 type Params = { params: Promise<{ id: string }> };
@@ -12,6 +11,8 @@ const patchBody = z.object({
   performedAt: z.string().nullable().optional(),
   sets: z.array(z.array(z.string()).min(0)).min(1).optional(),
 });
+
+export const dynamic = "force-dynamic";
 
 async function getSetlistDetail(id: string) {
   const listResult = await query("SELECT * FROM setlists WHERE id = $1", [id]);
@@ -39,9 +40,9 @@ export async function GET(_req: Request, context: Params) {
     const user = await requireUser();
     const { id } = await context.params;
     const detail = await getSetlistDetail(id);
-    if (!detail) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!detail) return privateJson({ error: "Not found" }, { status: 404 });
     await requireBandAccess(user, detail.setlist.bandId);
-    return NextResponse.json(detail);
+    return privateJson(detail);
   } catch (error) {
     return authErrorResponse(error);
   }
@@ -53,10 +54,10 @@ export async function PATCH(req: Request, context: Params) {
     const { id } = await context.params;
     const json = await req.json();
     const parsed = patchBody.safeParse(json);
-    if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    if (!parsed.success) return privateJson({ error: parsed.error.flatten() }, { status: 400 });
 
     const exists = await query("SELECT id, band_id FROM setlists WHERE id = $1", [id]);
-    if (!exists.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!exists.rows[0]) return privateJson({ error: "Not found" }, { status: 404 });
     await requireBandAccess(user, exists.rows[0].band_id);
     if (parsed.data.bandId !== undefined) await requireBandAccess(user, parsed.data.bandId);
 
@@ -106,7 +107,7 @@ export async function PATCH(req: Request, context: Params) {
   });
 
     const detail = await getSetlistDetail(id);
-    return NextResponse.json(detail ?? { ok: true });
+    return privateJson(detail ?? { ok: true });
   } catch (error) {
     return authErrorResponse(error);
   }
@@ -117,11 +118,11 @@ export async function DELETE(_req: Request, context: Params) {
     const user = await requireUser();
     const { id } = await context.params;
     const existing = await query("SELECT band_id FROM setlists WHERE id = $1", [id]);
-    if (!existing.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!existing.rows[0]) return privateJson({ error: "Not found" }, { status: 404 });
     await requireBandAccess(user, existing.rows[0].band_id);
     const result = await query("DELETE FROM setlists WHERE id = $1 RETURNING id", [id]);
-    if (!result.rows[0]) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    if (!result.rows[0]) return privateJson({ error: "Not found" }, { status: 404 });
+    return privateJson({ ok: true });
   } catch (error) {
     return authErrorResponse(error);
   }

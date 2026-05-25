@@ -14,7 +14,7 @@ export default function BandsPage() {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch("/api/bands");
+      const r = await fetch("/api/bands", { cache: "no-store" });
       setBands(await readArrayResponse<Band>(r, router, "Bands"));
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to load bands.");

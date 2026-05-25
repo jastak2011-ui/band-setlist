@@ -1,6 +1,5 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authErrorResponse, getAccessibleBandIds, requireBandAccess, requireUser } from "@/lib/auth";
+import { authErrorResponse, getAccessibleBandIds, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSetlist, query, transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
@@ -12,6 +11,8 @@ const saveBody = z.object({
   notes: z.string().max(4000).optional().nullable(),
   sets: z.array(z.array(z.string())).min(1),
 });
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
       params.push(bandId);
       clauses.push(`sl.band_id = $${params.length}`);
     } else if (accessibleBandIds !== null) {
-      if (accessibleBandIds.length === 0) return NextResponse.json([]);
+      if (accessibleBandIds.length === 0) return privateJson([]);
       params.push(accessibleBandIds);
       clauses.push(`sl.band_id = ANY($${params.length}::text[])`);
     }
@@ -57,7 +58,7 @@ export async function GET(req: Request) {
       `,
       params,
     );
-    return NextResponse.json(result.rows.map((row) => ({
+    return privateJson(result.rows.map((row) => ({
       ...mapSetlist(row),
       setCount: Number(row.set_count ?? 0),
       songCount: Number(row.song_count ?? 0),
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
     const json = await req.json();
     const parsed = saveBody.safeParse(json);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+      return privateJson({ error: parsed.error.flatten() }, { status: 400 });
     }
     await requireBandAccess(user, parsed.data.bandId);
 
@@ -105,7 +106,7 @@ export async function POST(req: Request) {
       }
     });
 
-    return NextResponse.json({ id: setlistId }, { status: 201 });
+    return privateJson({ id: setlistId }, { status: 201 });
   } catch (error) {
     return authErrorResponse(error);
   }

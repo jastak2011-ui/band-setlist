@@ -1,6 +1,8 @@
-﻿import { DELETE as deleteSetlist, GET as getSetlist, PATCH as patchSetlist } from "../../setlists/[id]/route";
+import { DELETE as deleteSetlist, GET as getSetlist, PATCH as patchSetlist } from "../../setlists/[id]/route";
 
 type Params = { params: Promise<{ id: string }> };
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, context: Params) {
   return getSetlist(req, context);

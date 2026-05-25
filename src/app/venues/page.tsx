@@ -14,7 +14,7 @@ export default function VenuesPage() {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch("/api/venues");
+      const r = await fetch("/api/venues", { cache: "no-store" });
       setVenues(await readArrayResponse<Venue>(r, router, "Venues"));
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Failed to load venues.");

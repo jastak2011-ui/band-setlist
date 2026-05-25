@@ -1,5 +1,4 @@
-﻿import { NextResponse } from "next/server";
-import { authErrorResponse, getAccessibleBandIds, requireBandAccess, requireUser } from "@/lib/auth";
+import { authErrorResponse, getAccessibleBandIds, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 type GroupTotalRow = {
@@ -21,6 +20,8 @@ type SongReportRow = {
   play_count: string;
   setlist_count: string;
 };
+
+export const dynamic = "force-dynamic";
 
 function buildWhere(venueId: string | null, bandId: string | null, accessibleBandIds: string[] | null) {
   const clauses: string[] = [];
@@ -58,7 +59,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const venueId = url.searchParams.get("venueId");
   const bandId = url.searchParams.get("bandId");
-  if (bandId === "__none" && user.role !== "admin") return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+  if (bandId === "__none" && user.role !== "admin") return privateJson({ error: "Admin access required." }, { status: 403 });
   if (bandId && bandId !== "__none") await requireBandAccess(user, bandId);
   const filters = buildWhere(venueId, bandId, await getAccessibleBandIds(user));
 
@@ -157,7 +158,7 @@ export async function GET(req: Request) {
     });
   }
 
-  return NextResponse.json({ bands: Array.from(bandMap.values()) });
+  return privateJson({ bands: Array.from(bandMap.values()) });
   } catch (error) {
     return authErrorResponse(error);
   }

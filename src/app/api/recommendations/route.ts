@@ -1,7 +1,8 @@
-﻿import { NextResponse } from "next/server";
-import { authErrorResponse, requireBandAccess, requireUser } from "@/lib/auth";
+import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
@@ -9,9 +10,9 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const venueId = url.searchParams.get("venueId");
     const bandId = url.searchParams.get("bandId") || undefined;
-    if (!venueId) return NextResponse.json({ error: "venueId required" }, { status: 400 });
+    if (!venueId) return privateJson({ error: "venueId required" }, { status: 400 });
     if (bandId) await requireBandAccess(user, bandId);
-    if (!bandId && user.role !== "admin") return NextResponse.json({ error: "bandId required" }, { status: 400 });
+    if (!bandId && user.role !== "admin") return privateJson({ error: "bandId required" }, { status: 400 });
 
   const allSongs = (await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)")).rows.map(mapSong);
   const seed = Number(url.searchParams.get("seed") ?? Date.now());
@@ -21,7 +22,7 @@ export async function GET(req: Request) {
     .map((s) => ({ song: s, plays: counts.get(s.id) ?? 0, score: scoreSongForRecommendation(s.id, counts), tie: seededSongTie(s.id, seed) }))
     .sort((a, b) => b.score - a.score || a.plays - b.plays || a.tie - b.tie);
 
-    return NextResponse.json({
+    return privateJson({
     venueId,
     bandId: bandId ?? null,
     ranked: ranked.map((r) => ({

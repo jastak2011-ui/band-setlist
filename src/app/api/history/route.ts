@@ -1,4 +1,6 @@
-﻿import { GET as getSetlists, POST as postSetlist } from "../setlists/route";
+import { GET as getSetlists, POST as postSetlist } from "../setlists/route";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   return getSetlists(req);

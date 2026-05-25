@@ -1,6 +1,5 @@
-﻿import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authErrorResponse, requireBandAccess, requireUser } from "@/lib/auth";
+import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
@@ -8,17 +7,19 @@ type Params = { params: Promise<{ id: string }> };
 
 const body = z.object({ bandId: z.string().nullable().optional() });
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request, context: Params) {
   try {
     const user = await requireUser();
     const { id } = await context.params;
     const json = await req.json().catch(() => ({}));
     const parsed = body.safeParse(json);
-    if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    if (!parsed.success) return privateJson({ error: parsed.error.flatten() }, { status: 400 });
 
     const sourceResult = await query("SELECT * FROM setlists WHERE id = $1", [id]);
     const source = sourceResult.rows[0];
-    if (!source) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!source) return privateJson({ error: "Not found" }, { status: 404 });
     await requireBandAccess(user, source.band_id);
     if (parsed.data.bandId !== undefined) await requireBandAccess(user, parsed.data.bandId);
 
@@ -56,7 +57,7 @@ export async function POST(req: Request, context: Params) {
     }
   });
 
-    return NextResponse.json({ id: newSetlistId }, { status: 201 });
+    return privateJson({ id: newSetlistId }, { status: 201 });
   } catch (error) {
     return authErrorResponse(error);
   }

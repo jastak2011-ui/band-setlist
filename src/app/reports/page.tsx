@@ -62,7 +62,10 @@ export default function ReportsPage() {
 
   const loadFilters = useCallback(async () => {
     try {
-      const [venueResponse, bandResponse] = await Promise.all([fetch("/api/venues"), fetch("/api/bands")]);
+      const [venueResponse, bandResponse] = await Promise.all([
+        fetch("/api/venues", { cache: "no-store" }),
+        fetch("/api/bands", { cache: "no-store" }),
+      ]);
       setVenues(await readArrayResponse<Venue>(venueResponse, router, "Venues"));
       setBands(await readArrayResponse<Band>(bandResponse, router, "Bands"));
     } catch (error) {
@@ -80,7 +83,7 @@ export default function ReportsPage() {
     if (bandId) params.set("bandId", bandId);
     const query = params.toString();
     try {
-      const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`);
+      const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`, { cache: "no-store" });
       const json = await readObjectResponse<{ bands?: unknown }>(response, router, "Report");
       setReports(Array.isArray(json?.bands) ? json.bands as BandReport[] : []);
     } catch (error) {

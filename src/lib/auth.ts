@@ -208,7 +208,13 @@ export async function requireBandAccess(user: AuthUser, bandId: string | null | 
 
 export function authErrorResponse(error: unknown) {
   if (error instanceof AuthError) {
-    return NextResponse.json({ error: error.message }, { status: error.status });
+    return privateJson({ error: error.message }, { status: error.status });
   }
   throw error;
+}
+
+export function privateJson(body: unknown, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+  return NextResponse.json(body, { ...init, headers });
 }

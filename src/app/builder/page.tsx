@@ -304,7 +304,11 @@ export default function BuilderPage() {
 
   const load = useCallback(async () => {
     try {
-      const [sr, br, vr] = await Promise.all([fetch("/api/songs"), fetch("/api/bands"), fetch("/api/venues")]);
+      const [sr, br, vr] = await Promise.all([
+        fetch("/api/songs", { cache: "no-store" }),
+        fetch("/api/bands", { cache: "no-store" }),
+        fetch("/api/venues", { cache: "no-store" }),
+      ]);
       setSongs(await readArrayResponse<Song>(sr, router, "Songs"));
       setBands(await readArrayResponse<Band>(br, router, "Bands"));
       setVenues(await readArrayResponse<Venue>(vr, router, "Venues"));
@@ -422,6 +426,7 @@ export default function BuilderPage() {
     setMsg(null);
     const r = await fetch("/api/build-sets", {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         songIds: Array.from(selected),
@@ -522,6 +527,7 @@ export default function BuilderPage() {
     setMsg(null);
     const r = await fetch("/api/setlists", {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bandId, venueId, title: generatedTitle, performedAt: `${performedAt}T12:00:00`, sets: sets.map((s) => s.songs.map((x) => x.id)) }),
     });
@@ -727,7 +733,7 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
     let cancelled = false;
     void (async () => {
       const seed = Date.now();
-      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&seed=${seed}`);
+      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&seed=${seed}`, { cache: "no-store" });
       const data = await readObjectResponse<{ ranked?: unknown }>(r, router, "Recommendations").catch((error) => {
         if (!cancelled) setMsg(error instanceof Error ? error.message : "Failed to load recommendations.");
         return null;
