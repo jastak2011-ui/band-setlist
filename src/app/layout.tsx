@@ -14,7 +14,7 @@ const nav = [
   { href: "/bands", label: "Bands" },
   { href: "/venues", label: "Venues" },
   { href: "/builder", label: "Set builder" },
-  { href: "/history", label: "History" },
+  { href: "/history", label: "Set History" },
   { href: "/reports", label: "Reports" },
   { href: "/admin", label: "Admin" },
 ];

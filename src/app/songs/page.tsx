@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { readArrayResponse } from "@/app/client-fetch";
 
@@ -96,6 +96,14 @@ type SmartLookupPreview = {
   result: MetadataLookupResult;
 };
 
+type BulkEnrichProgress = {
+  total: number;
+  processed: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+};
+
 const emptyForm: SongForm = {
   title: "",
   artist: "",
@@ -150,6 +158,19 @@ const htmlImportTemplate = `<!doctype html>
     </table>
   </body>
 </html>`;
+
+const bulkEnrichmentFields: EnrichmentField[] = [
+  "bpm",
+  "durationSec",
+  "genre",
+  "vibe",
+  "crowdScore",
+  "danceability",
+  "energy",
+  "vocalDifficulty",
+  "openerCandidate",
+  "closerCandidate",
+];
 
 function formatDuration(seconds: number | null) {
   if (seconds == null) return "-";
@@ -249,7 +270,27 @@ function formValue(form: SongForm, field: EnrichmentField) {
 }
 
 function canFillMissing(current: unknown) {
-  return !hasValue(current) || current === false;
+  return !hasValue(current);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function songMatchesSearch(song: Song, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    song.title,
+    song.artist,
+    song.genre,
+    song.musicalKey,
+    song.notes,
+  ].some((value) => (value ?? "").toLowerCase().includes(normalized));
+}
+
+function missingBulkEnrichmentFields(song: Song) {
+  return bulkEnrichmentFields.filter((field) => canFillMissing(songValue(song, field)));
 }
 
 async function readErrorMessage(response: Response) {
@@ -509,9 +550,13 @@ export default function SongsPage() {
   const [smartPreview, setSmartPreview] = useState<SmartLookupPreview | null>(null);
   const [smartStatusById, setSmartStatusById] = useState<Record<string, string>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkEnrichBusy, setBulkEnrichBusy] = useState(false);
+  const [bulkEnrichProgress, setBulkEnrichProgress] = useState<BulkEnrichProgress | null>(null);
   const [showDuplicatesOnly, setShowDuplicatesOnly] = useState(false);
+  const [songSearch, setSongSearch] = useState("");
   const [csvBusy, setCsvBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const bulkEnrichCancelRef = useRef(false);
 
   const duplicateCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -527,11 +572,14 @@ export default function SongsPage() {
     [duplicateCounts, songs],
   );
   const shouldShowDuplicatesOnly = showDuplicatesOnly && duplicateSongIds.size > 0;
-  const visibleSongs = shouldShowDuplicatesOnly ? songs.filter((song) => duplicateSongIds.has(song.id)) : songs;
+  const duplicateFilteredSongs = shouldShowDuplicatesOnly ? songs.filter((song) => duplicateSongIds.has(song.id)) : songs;
+  const visibleSongs = duplicateFilteredSongs.filter((song) => songMatchesSearch(song, songSearch));
   const duplicateGroupCount = new Set(
     songs.map((song) => duplicateKey(song)).filter((key) => (duplicateCounts.get(key) ?? 0) > 1),
   ).size;
   const missingBpmCount = songs.filter((song) => song.bpm == null).length;
+  const bulkEnrichCandidateCount = songs.filter((song) => missingBulkEnrichmentFields(song).length > 0).length;
+  const anyBulkBusy = bulkBusy || bulkEnrichBusy;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -786,6 +834,84 @@ export default function SongsPage() {
     );
   }
 
+  async function enrichMetadataForAll() {
+    if (bulkEnrichBusy) return;
+    bulkEnrichCancelRef.current = false;
+    setMsg(null);
+    setSmartPreview(null);
+    setBulkEnrichBusy(true);
+
+    let progress: BulkEnrichProgress = {
+      total: songs.length,
+      processed: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    setBulkEnrichProgress(progress);
+
+    const setProgress = (patch: Partial<BulkEnrichProgress>) => {
+      progress = { ...progress, ...patch };
+      setBulkEnrichProgress(progress);
+    };
+
+    for (const [index, song] of songs.entries()) {
+      if (bulkEnrichCancelRef.current) break;
+
+      const missingFields = missingBulkEnrichmentFields(song);
+      if (missingFields.length === 0) {
+        setProgress({ processed: progress.processed + 1, skipped: progress.skipped + 1 });
+        continue;
+      }
+
+      setMsg(`Enriching metadata ${index + 1}/${songs.length}: ${song.title}`);
+
+      try {
+        const result = await lookupEnrichment(song);
+        const body: Record<string, unknown> = {};
+
+        for (const item of result.proposals) {
+          if (!bulkEnrichmentFields.includes(item.field)) continue;
+          if (item.status !== "found" || !hasValue(item.proposed)) continue;
+          if (!canFillMissing(songValue(song, item.field))) continue;
+          body[item.field] = item.proposed;
+        }
+
+        if (Object.keys(body).length === 0) {
+          setProgress({ processed: progress.processed + 1, skipped: progress.skipped + 1 });
+        } else {
+          const response = await fetch(`/api/songs/${song.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) throw new Error(await readErrorMessage(response));
+
+          const updated = (await response.json()) as Song;
+          setSongs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+          setProgress({ processed: progress.processed + 1, updated: progress.updated + 1 });
+        }
+      } catch {
+        setProgress({ processed: progress.processed + 1, failed: progress.failed + 1 });
+      }
+
+      if ((index + 1) % 5 === 0 && !bulkEnrichCancelRef.current) await sleep(600);
+    }
+
+    setBulkEnrichBusy(false);
+    setMsg(
+      bulkEnrichCancelRef.current
+        ? `Stopped metadata enrichment after ${progress.processed}/${progress.total}. Updated ${progress.updated}, skipped ${progress.skipped}, failed ${progress.failed}.`
+        : `Metadata enrichment complete. Processed ${progress.processed}/${progress.total}. Updated ${progress.updated}, skipped ${progress.skipped}, failed ${progress.failed}.`,
+    );
+  }
+
+  function cancelBulkEnrichment() {
+    bulkEnrichCancelRef.current = true;
+    setMsg("Stopping metadata enrichment after the current song finishes...");
+  }
+
   function startEdit(song: Song) {
     setMsg(null);
     setEditingId(song.id);
@@ -912,21 +1038,51 @@ export default function SongsPage() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-medium">Library ({loading ? "..." : songs.length})</h2>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Showing {loading ? "..." : visibleSongs.length} of {songs.length} songs
+            </p>
             {duplicateSongIds.size > 0 && (
               <p className="mt-1 text-xs text-amber-200">
                 {duplicateSongIds.size} duplicate songs across {duplicateGroupCount} duplicate group{duplicateGroupCount === 1 ? "" : "s"}
               </p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={loading || (!showDuplicatesOnly && duplicateSongIds.size === 0)} onClick={() => setShowDuplicatesOnly((value) => !value)}>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex min-w-64 items-center gap-2">
+              <input
+                className="input h-9 px-3 py-1.5 text-sm"
+                placeholder="Search title, artist, genre, key, notes"
+                value={songSearch}
+                onChange={(event) => setSongSearch(event.target.value)}
+              />
+              {songSearch && (
+                <button type="button" className="btn btn-ghost h-9 px-3 py-1.5 text-xs" onClick={() => setSongSearch("")}>
+                  Clear
+                </button>
+              )}
+            </div>
+            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={loading || anyBulkBusy || (!showDuplicatesOnly && duplicateSongIds.size === 0)} onClick={() => setShowDuplicatesOnly((value) => !value)}>
               {shouldShowDuplicatesOnly ? "Show all songs" : `Show duplicates (${duplicateSongIds.size})`}
             </button>
-            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={loading || bulkBusy || missingBpmCount === 0} onClick={() => void lookupMissingBpms()}>
+            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={loading || anyBulkBusy || bulkEnrichCandidateCount === 0} onClick={() => void enrichMetadataForAll()}>
+              {bulkEnrichBusy ? "Enriching all" : `Enrich Metadata for All (${bulkEnrichCandidateCount})`}
+            </button>
+            {bulkEnrichBusy && (
+              <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" onClick={cancelBulkEnrichment}>
+                Stop
+              </button>
+            )}
+            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={loading || anyBulkBusy || missingBpmCount === 0} onClick={() => void lookupMissingBpms()}>
               {bulkBusy ? "Looking up BPMs" : `Lookup missing BPMs (${missingBpmCount})`}
             </button>
           </div>
         </div>
+        {bulkEnrichProgress && (
+          <div className="mb-3 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs text-[var(--muted)]">
+            <span className="font-medium text-[var(--text)]">Bulk enrichment:</span>{" "}
+            total {bulkEnrichProgress.total} · processed {bulkEnrichProgress.processed} · updated {bulkEnrichProgress.updated} · skipped {bulkEnrichProgress.skipped} · failed {bulkEnrichProgress.failed}
+          </div>
+        )}
         <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="text-[var(--muted)]">
             <tr>
@@ -991,13 +1147,13 @@ export default function SongsPage() {
                     {isEditing ? (
                       <>
                         <button type="button" className="btn btn-primary mr-2 px-2 py-1 text-xs" disabled={savingId === s.id} onClick={() => void saveEdit(s)}>{savingId === s.id ? "Saving" : "Save"}</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
+                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setEditingId(null)}>Cancel</button>
                       </>
                     ) : (
                       <>
                         <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" onClick={() => startEdit(s)}>Edit</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={bulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
+                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => void remove(s.id)}>Del</button>
                       </>
                     )}
@@ -1024,7 +1180,7 @@ export default function SongsPage() {
                       <div className="mx-auto max-w-5xl space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
                           <span className="text-[var(--muted)]">Use the current edit row values for Deezer, MusicBrainz, Last.fm, and local library enrichment.</span>
-                          <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>
+                          <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>
                             {smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}
                           </button>
                         </div>
@@ -1107,17 +1263,18 @@ export default function SongsPage() {
               return rows;
             })}</tbody>
         </table>
-        {shouldShowDuplicatesOnly && visibleSongs.length === 0 && <div className="py-6 text-sm text-[var(--muted)]">No duplicate songs found.</div>}
+        {visibleSongs.length === 0 && (
+          <div className="py-6 text-sm text-[var(--muted)]">
+            {songSearch.trim()
+              ? "No songs match your search."
+              : shouldShowDuplicatesOnly
+                ? "No duplicate songs found."
+                : "No songs found."}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-
-
-
-
-
-
 
 
