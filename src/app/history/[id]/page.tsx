@@ -477,14 +477,13 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               );
             })}
           </ol>
-          <table className="print-only w-full border-collapse text-sm">
+          <table className="print-only w-full border-collapse text-sm leading-tight">
             <thead>
               <tr className="border-b border-[var(--border)] text-left">
                 <th className="py-1 pr-2 font-medium">#</th>
                 <th className="py-1 pr-2 font-medium">Song</th>
                 <th className="py-1 pr-2 font-medium">Artist</th>
-                <th className="py-1 pr-2 font-medium">Key</th>
-                <th className="py-1 pr-2 font-medium">Capo / Tuning</th>
+                <th className="py-1 pr-2 text-right font-medium">BPM</th>
                 <th className="py-1 font-medium">Notes</th>
               </tr>
             </thead>
@@ -494,8 +493,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                   <td className="py-1 pr-2 align-top">{songIndex + 1}</td>
                   <td className="py-1 pr-2 align-top font-medium">{song.title}</td>
                   <td className="py-1 pr-2 align-top">{song.artist}</td>
-                  <td className="py-1 pr-2 align-top">{song.musicalKey || ""}</td>
-                  <td className="py-1 pr-2 align-top">{song.capoOrTuning || ""}</td>
+                  <td className="py-1 pr-2 text-right align-top font-medium">{song.bpm ?? "-"}</td>
                   <td className="py-1 align-top">{song.notes || ""}</td>
                 </tr>
               ))}
