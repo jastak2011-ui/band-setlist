@@ -294,6 +294,7 @@ function missingBulkEnrichmentFields(song: Song) {
 }
 
 async function readErrorMessage(response: Response) {
+  if (response.status === 401) return "You are not logged in or your session expired. Please log in again.";
   const text = await response.text();
   if (!text) return `Request failed (${response.status})`;
 
@@ -668,12 +669,15 @@ export default function SongsPage() {
     const payload = editingId === song.id ? lookupPayloadFromForm(song, editForm) : lookupPayloadFromSong(song);
     const response = await fetch(route, {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const data = (await response.json().catch(() => null)) as MetadataLookupResult | { error?: unknown; message?: string } | null;
     if (!response.ok && (!data || !("source" in data))) {
-      throw new Error(data?.message ?? `Enrichment lookup failed (${response.status}).`);
+      if (response.status === 401) throw new Error("You are not logged in or your session expired. Please log in again.");
+      const detail = data && "error" in data && typeof data.error === "string" ? data.error : data?.message;
+      throw new Error(detail ?? `Enrichment lookup failed (${response.status}).`);
     }
     if (!data || !("source" in data)) throw new Error("Enrichment lookup returned an unexpected response.");
     return data;
@@ -770,6 +774,7 @@ export default function SongsPage() {
     setSavingId(song.id);
     const response = await fetch(`/api/songs/${song.id}`, {
       method: "PATCH",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -799,15 +804,22 @@ export default function SongsPage() {
     setBulkBusy(true);
     let updatedCount = 0;
     const misses: string[] = [];
+    let authErrorMessage: string | null = null;
 
     for (const [index, song] of targets.entries()) {
       setMsg(`Enriching BPMs ${index + 1}/${targets.length}: ${song.title}`);
-      const result = await lookupEnrichment(song, "/api/bpm-lookup").catch(() => null);
+      const result = await lookupEnrichment(song, "/api/bpm-lookup").catch((error) => {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("not logged in") || message.includes("session expired")) authErrorMessage = message;
+        return null;
+      });
+      if (authErrorMessage) break;
       const bpmProposal = result?.proposals.find((item) => item.field === "bpm" && item.status === "found" && typeof item.proposed === "number");
       if (bpmProposal) {
         const durationProposal = result?.proposals.find((item) => item.field === "durationSec" && item.status === "found" && typeof item.proposed === "number");
         const patch = await fetch(`/api/songs/${song.id}`, {
           method: "PATCH",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             bpm: bpmProposal.proposed,
@@ -828,9 +840,10 @@ export default function SongsPage() {
 
     setBulkBusy(false);
     setMsg(
-      misses.length > 0
+      authErrorMessage ??
+      (misses.length > 0
         ? `Updated ${updatedCount} BPM${updatedCount === 1 ? "" : "s"}. ${misses.length} still need manual BPM entry.`
-        : `Updated ${updatedCount} BPM${updatedCount === 1 ? "" : "s"}.`,
+        : `Updated ${updatedCount} BPM${updatedCount === 1 ? "" : "s"}.`),
     );
   }
 
@@ -849,6 +862,7 @@ export default function SongsPage() {
       failed: 0,
     };
     setBulkEnrichProgress(progress);
+    let authErrorMessage: string | null = null;
 
     const setProgress = (patch: Partial<BulkEnrichProgress>) => {
       progress = { ...progress, ...patch };
@@ -882,6 +896,7 @@ export default function SongsPage() {
         } else {
           const response = await fetch(`/api/songs/${song.id}`, {
             method: "PATCH",
+            credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           });
@@ -892,7 +907,15 @@ export default function SongsPage() {
           setSongs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
           setProgress({ processed: progress.processed + 1, updated: progress.updated + 1 });
         }
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("not logged in") || message.includes("session expired")) {
+          setProgress({ processed: progress.processed + 1, failed: progress.failed + 1 });
+          bulkEnrichCancelRef.current = true;
+          authErrorMessage = message;
+          setMsg(message);
+          break;
+        }
         setProgress({ processed: progress.processed + 1, failed: progress.failed + 1 });
       }
 
@@ -901,9 +924,10 @@ export default function SongsPage() {
 
     setBulkEnrichBusy(false);
     setMsg(
-      bulkEnrichCancelRef.current
+      authErrorMessage ??
+      (bulkEnrichCancelRef.current
         ? `Stopped metadata enrichment after ${progress.processed}/${progress.total}. Updated ${progress.updated}, skipped ${progress.skipped}, failed ${progress.failed}.`
-        : `Metadata enrichment complete. Processed ${progress.processed}/${progress.total}. Updated ${progress.updated}, skipped ${progress.skipped}, failed ${progress.failed}.`,
+        : `Metadata enrichment complete. Processed ${progress.processed}/${progress.total}. Updated ${progress.updated}, skipped ${progress.skipped}, failed ${progress.failed}.`),
     );
   }
 
@@ -1276,5 +1300,3 @@ export default function SongsPage() {
     </div>
   );
 }
-
-
