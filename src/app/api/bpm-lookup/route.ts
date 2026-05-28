@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authErrorResponse, requireUser } from "@/lib/auth";
-import { lookupBpm } from "@/lib/bpm-lookup";
+import { lookupSongMetadata } from "@/lib/metadata-lookup";
 
 const body = z.object({
   title: z.string().min(1),
@@ -16,8 +16,11 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
-    const result = await lookupBpm(parsed.data.title, parsed.data.artist);
-    return NextResponse.json(result);
+    const result = await lookupSongMetadata(parsed.data);
+    return NextResponse.json({
+      ...result,
+      message: result.message ?? (result.bpm == null ? "BPM was not found from the shared enrichment lookup." : undefined),
+    });
   } catch (error) {
     return authErrorResponse(error);
   }

@@ -47,22 +47,48 @@ type SongForm = {
 
 type EditForm = SongForm;
 
-type LookupResult = {
-  updated: Song | null;
-  message: string | null;
-};
-
 type MetadataLookupResult = {
-  source: "musicbrainz" | "musicbrainz-lastfm" | "lastfm" | "none";
+  source: "enrichment" | "none";
   musicBrainzRecordingId?: string;
   lastfmUrl?: string;
+  deezerTrackId?: string;
   matchedTitle?: string;
   matchedArtist?: string;
+  sourcesTried: string[];
+  proposals: EnrichmentProposal[];
+  unavailable: EnrichmentProposal[];
   durationSec: number | null;
+  bpm: number | null;
+  energy: number | null;
+  danceability: number | null;
   crowdScore: number | null;
   genre: string | null;
   vibe: string | null;
   message?: string;
+};
+
+type EnrichmentField =
+  | "title"
+  | "artist"
+  | "bpm"
+  | "durationSec"
+  | "genre"
+  | "vibe"
+  | "crowdScore"
+  | "danceability"
+  | "energy"
+  | "vocalDifficulty"
+  | "openerCandidate"
+  | "closerCandidate"
+  | "musicalKey";
+
+type EnrichmentProposal = {
+  field: EnrichmentField;
+  current: string | number | boolean | null;
+  proposed: string | number | boolean | null;
+  source: "local-library" | "deezer" | "musicbrainz" | "lastfm" | "lastfm-tags" | "none";
+  status: "found" | "not-found";
+  note?: string;
 };
 
 type SmartLookupPreview = {
@@ -184,6 +210,48 @@ function formatRating(value: number | null) {
   return Math.round(normalized * 10).toString();
 }
 
+function hasValue(value: unknown) {
+  return value !== null && value !== undefined && !(typeof value === "string" && value.trim() === "");
+}
+
+function formatPreviewValue(value: unknown) {
+  if (!hasValue(value)) return "-";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : String(Math.round(value * 10));
+  return String(value);
+}
+
+function enrichmentFieldLabel(field: EnrichmentField) {
+  const labels: Record<EnrichmentField, string> = {
+    title: "Title",
+    artist: "Artist",
+    bpm: "BPM",
+    durationSec: "Duration",
+    genre: "Genre",
+    vibe: "Vibe",
+    crowdScore: "Crowd",
+    danceability: "Danceability",
+    energy: "Energy",
+    vocalDifficulty: "Vocal difficulty",
+    openerCandidate: "Opener",
+    closerCandidate: "Closer",
+    musicalKey: "Key",
+  };
+  return labels[field];
+}
+
+function songValue(song: Song, field: EnrichmentField) {
+  return song[field] ?? null;
+}
+
+function formValue(form: SongForm, field: EnrichmentField) {
+  return form[field] ?? null;
+}
+
+function canFillMissing(current: unknown) {
+  return !hasValue(current) || current === false;
+}
+
 async function readErrorMessage(response: Response) {
   const text = await response.text();
   if (!text) return `Request failed (${response.status})`;
@@ -243,6 +311,44 @@ function metadataBody(form: SongForm) {
     leadSinger: form.leadSinger.trim() || null,
     capoOrTuning: form.capoOrTuning.trim() || null,
     avoidAfter: form.avoidAfter.trim() || null,
+  };
+}
+
+function lookupPayloadFromSong(song: Song) {
+  return {
+    id: song.id,
+    title: song.title,
+    artist: song.artist,
+    bpm: song.bpm,
+    musicalKey: song.musicalKey,
+    durationSec: song.durationSec,
+    energy: song.energy,
+    genre: song.genre,
+    vibe: song.vibe,
+    crowdScore: song.crowdScore,
+    danceability: song.danceability,
+    vocalDifficulty: song.vocalDifficulty,
+    openerCandidate: song.openerCandidate,
+    closerCandidate: song.closerCandidate,
+  };
+}
+
+function lookupPayloadFromForm(song: Song, form: SongForm) {
+  return {
+    id: song.id,
+    title: form.title.trim() || song.title,
+    artist: form.artist.trim() || song.artist,
+    bpm: parseBpm(form.bpm),
+    musicalKey: form.musicalKey.trim() || null,
+    durationSec: parseDuration(form.durationSec),
+    energy: parseRating(form.energy),
+    genre: form.genre.trim() || null,
+    vibe: form.vibe.trim() || null,
+    crowdScore: parseRating(form.crowdScore),
+    danceability: parseRating(form.danceability),
+    vocalDifficulty: parseRating(form.vocalDifficulty),
+    openerCandidate: form.openerCandidate,
+    closerCandidate: form.closerCandidate,
   };
 }
 
@@ -510,46 +616,23 @@ export default function SongsPage() {
     await load();
   }
 
-  async function lookupAndSaveBpm(song: Song): Promise<LookupResult> {
-    const r = await fetch("/api/bpm-lookup", {
+  async function lookupEnrichment(song: Song, route = "/api/metadata/lookup") {
+    const payload = editingId === song.id ? lookupPayloadFromForm(song, editForm) : lookupPayloadFromSong(song);
+    const response = await fetch(route, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: song.title, artist: song.artist }),
+      body: JSON.stringify(payload),
     });
-
-    if (!r.ok) return { updated: null, message: await readErrorMessage(r) };
-
-    const data = await r.json();
-    if (data.message && !data.bpm) return { updated: null, message: data.message };
-
-    const patch = await fetch(`/api/songs/${song.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bpm: data.bpm,
-        energy: data.energy,
-        musicalKey: data.musicalKey ?? song.musicalKey,
-        durationSec: data.durationSec ?? song.durationSec,
-      }),
-    });
-
-    if (!patch.ok) return { updated: null, message: await readErrorMessage(patch) };
-    return { updated: (await patch.json()) as Song, message: null };
+    const data = (await response.json().catch(() => null)) as MetadataLookupResult | { error?: unknown; message?: string } | null;
+    if (!response.ok && (!data || !("source" in data))) {
+      throw new Error(data?.message ?? `Enrichment lookup failed (${response.status}).`);
+    }
+    if (!data || !("source" in data)) throw new Error("Enrichment lookup returned an unexpected response.");
+    return data;
   }
 
   async function lookupBpm(song: Song) {
-    setMsg(null);
-    setSavingId(song.id);
-    const result = await lookupAndSaveBpm(song);
-    setSavingId(null);
-
-    if (!result.updated) {
-      setMsg(result.message ?? "No BPM found. You can add it manually with Edit.");
-      return;
-    }
-
-    setSongs((current) => current.map((row) => (row.id === result.updated?.id ? result.updated : row)));
-    setMsg(`Updated BPM for ${result.updated.title}.`);
+    await lookupSmartData(song, "/api/bpm-lookup");
   }
   function lookupIdentity(song: Song) {
     if (editingId !== song.id) return { title: song.title, artist: song.artist };
@@ -568,35 +651,39 @@ export default function SongsPage() {
     });
   }
 
-  function applySmartResultToEditForm(result: MetadataLookupResult) {
+  function applySmartResultToEditForm(result: MetadataLookupResult, overwrite = false) {
     setEditForm((current) => ({
       ...current,
-      durationSec: result.durationSec != null ? formatDuration(result.durationSec) : current.durationSec,
-      crowdScore: result.crowdScore != null ? result.crowdScore.toString() : current.crowdScore,
-      genre: result.genre ?? current.genre,
-      vibe: result.vibe ?? current.vibe,
+      ...result.proposals.reduce<Partial<SongForm>>((patch, item) => {
+        if (item.status !== "found" || !hasValue(item.proposed)) return patch;
+        const currentValue = formValue(current, item.field);
+        if (!overwrite && !canFillMissing(currentValue)) return patch;
+        if (item.field === "durationSec" && typeof item.proposed === "number") patch.durationSec = formatDuration(item.proposed);
+        else if (["bpm", "energy", "crowdScore", "danceability", "vocalDifficulty"].includes(item.field) && typeof item.proposed === "number") {
+          patch[item.field as "bpm" | "energy" | "crowdScore" | "danceability" | "vocalDifficulty"] = item.field === "bpm" ? String(item.proposed) : formatRating(item.proposed);
+        } else if (item.field === "openerCandidate" || item.field === "closerCandidate") {
+          patch[item.field] = Boolean(item.proposed);
+        } else if (typeof item.proposed === "string") {
+          patch[item.field as "title" | "artist" | "genre" | "vibe" | "musicalKey"] = item.proposed;
+        }
+        return patch;
+      }, {}),
     }));
   }
 
-  async function lookupSmartData(song: Song) {
+  async function lookupSmartData(song: Song, route = "/api/metadata/lookup") {
     const identity = lookupIdentity(song);
     setMsg(null);
     setSmartPreview(null);
-    setSmartStatus(song.id, `Looking up metadata for ${identity.title} - ${identity.artist}...`);
+    setSmartStatus(song.id, `Enriching metadata for ${identity.title} - ${identity.artist}...`);
     setSmartBusyId(song.id);
 
-    let response: Response;
-    let data: MetadataLookupResult | { error?: unknown; message?: string } | null = null;
+    let data: MetadataLookupResult | null = null;
     try {
-      response = await fetch("/api/metadata/lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(identity),
-      });
-      data = (await response.json().catch(() => null)) as MetadataLookupResult | { error?: unknown; message?: string } | null;
-      console.debug("Metadata lookup", { status: response.status, title: identity.title, artist: identity.artist, response: data });
+      data = await lookupEnrichment(song, route);
+      console.debug("Metadata enrichment lookup", { title: identity.title, artist: identity.artist, response: data });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Metadata lookup failed.";
+      const message = error instanceof Error ? error.message : "Metadata enrichment failed.";
       setSmartBusyId(null);
       setSmartStatus(song.id, message);
       setMsg(message);
@@ -605,43 +692,30 @@ export default function SongsPage() {
 
     setSmartBusyId(null);
 
-    if (!data || !("source" in data)) {
-      const message = data?.message ? `Metadata lookup failed (${response.status}): ${data.message}` : `Metadata lookup failed (${response.status}).`;
-      setSmartStatus(song.id, message);
-      setMsg(message);
-      return;
-    }
-
-    if (!response.ok || data.source === "none") {
-      const message = data.message ? `Metadata lookup failed (${response.status}): ${data.message}` : `Metadata lookup failed (${response.status}).`;
-      setSmartStatus(song.id, message);
-      setMsg(message);
-      return;
-    }
-
     const matchedMessage = `Matched ${data.matchedTitle ?? identity.title} by ${data.matchedArtist ?? identity.artist}.`;
-    if (editingId === song.id) {
-      applySmartResultToEditForm(data);
-      const message = `${matchedMessage} Filled available edit fields. Review, then click Save.`;
-      setSmartStatus(song.id, data.message ? `${message} ${data.message}` : message);
-      setMsg(data.message ?? message);
-      return;
-    }
-
     setSmartPreview({ songId: song.id, result: data });
-    setSmartStatus(song.id, data.message ? `${matchedMessage} ${data.message}` : `${matchedMessage} Review and apply the metadata.`);
-    setMsg(data.message ?? `${matchedMessage} Review and apply the metadata.`);
+    setSmartStatus(song.id, data.message ? `${matchedMessage} ${data.message}` : `${matchedMessage} Review found and unavailable fields before applying.`);
+    setMsg(data.message ?? `${matchedMessage} Review found and unavailable fields before applying.`);
   }
 
-  async function applySmartData(song: Song, result: MetadataLookupResult) {
+  async function applySmartData(song: Song, result: MetadataLookupResult, overwrite = false) {
+    if (overwrite && !confirm("Apply all proposed metadata and overwrite existing populated fields?")) return;
+    if (editingId === song.id) {
+      applySmartResultToEditForm(result, overwrite);
+      setSmartPreview(null);
+      setSmartStatus(song.id, overwrite ? "Applied all proposed metadata to the edit row. Review, then click Save." : "Applied missing metadata to the edit row. Review, then click Save.");
+      return;
+    }
+
     const body: Record<string, unknown> = {};
-    if (result.durationSec != null) body.durationSec = result.durationSec;
-    if (result.crowdScore != null) body.crowdScore = result.crowdScore;
-    if (result.genre) body.genre = result.genre;
-    if (result.vibe) body.vibe = result.vibe;
+    for (const item of result.proposals) {
+      if (item.status !== "found" || !hasValue(item.proposed)) continue;
+      if (!overwrite && !canFillMissing(songValue(song, item.field))) continue;
+      body[item.field] = item.proposed;
+    }
 
     if (Object.keys(body).length === 0) {
-      setMsg(result.message ?? "Metadata lookup did not return anything to apply.");
+      setMsg(result.message ?? "Enrichment lookup did not return missing fields to apply.");
       return;
     }
 
@@ -662,8 +736,8 @@ export default function SongsPage() {
     setSongs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
     if (editingId === updated.id) setEditForm(editFormFromSong(updated));
     setSmartPreview(null);
-    setSmartStatus(song.id, result.message ?? `Applied metadata for ${updated.title}.`);
-    setMsg(result.message ?? `Applied metadata for ${updated.title}.`);
+    setSmartStatus(song.id, result.message ?? `Applied enrichment for ${updated.title}.`);
+    setMsg(result.message ?? `Applied enrichment for ${updated.title}.`);
   }
 
   async function lookupMissingBpms() {
@@ -679,12 +753,26 @@ export default function SongsPage() {
     const misses: string[] = [];
 
     for (const [index, song] of targets.entries()) {
-      setMsg(`Looking up BPMs ${index + 1}/${targets.length}: ${song.title}`);
-      const result = await lookupAndSaveBpm(song);
-
-      if (result.updated) {
+      setMsg(`Enriching BPMs ${index + 1}/${targets.length}: ${song.title}`);
+      const result = await lookupEnrichment(song, "/api/bpm-lookup").catch(() => null);
+      const bpmProposal = result?.proposals.find((item) => item.field === "bpm" && item.status === "found" && typeof item.proposed === "number");
+      if (bpmProposal) {
+        const durationProposal = result?.proposals.find((item) => item.field === "durationSec" && item.status === "found" && typeof item.proposed === "number");
+        const patch = await fetch(`/api/songs/${song.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bpm: bpmProposal.proposed,
+            durationSec: song.durationSec == null && durationProposal ? durationProposal.proposed : song.durationSec,
+          }),
+        });
+        if (!patch.ok) {
+          misses.push(song.title);
+          continue;
+        }
+        const updated = (await patch.json()) as Song;
         updatedCount += 1;
-        setSongs((current) => current.map((row) => (row.id === result.updated?.id ? result.updated : row)));
+        setSongs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
       } else {
         misses.push(song.title);
       }
@@ -903,14 +991,13 @@ export default function SongsPage() {
                     {isEditing ? (
                       <>
                         <button type="button" className="btn btn-primary mr-2 px-2 py-1 text-xs" disabled={savingId === s.id} onClick={() => void saveEdit(s)}>{savingId === s.id ? "Saving" : "Save"}</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Looking up..." : "Lookup Metadata"}</button>
+                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setEditingId(null)}>Cancel</button>
                       </>
                     ) : (
                       <>
                         <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" onClick={() => startEdit(s)}>Edit</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={bulkBusy || savingId === s.id} onClick={() => void lookupBpm(s)}>{savingId === s.id ? "Looking" : "Lookup BPM"}</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={bulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Looking up..." : "Lookup Metadata"}</button>
+                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={bulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => void remove(s.id)}>Del</button>
                       </>
                     )}
@@ -936,9 +1023,9 @@ export default function SongsPage() {
                     <td colSpan={7} className="px-3 py-4">
                       <div className="mx-auto max-w-5xl space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
-                          <span className="text-[var(--muted)]">Use the current title and artist in this edit row for MusicBrainz and Last.fm metadata lookup.</span>
+                          <span className="text-[var(--muted)]">Use the current edit row values for Deezer, MusicBrainz, Last.fm, and local library enrichment.</span>
                           <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>
-                            {smartBusyId === s.id ? "Looking up..." : "Lookup Metadata"}
+                            {smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}
                           </button>
                         </div>
                         <OptionalMetadata form={editForm} defaultOpen onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))} />
@@ -955,25 +1042,61 @@ export default function SongsPage() {
                       <div className="mx-auto max-w-5xl rounded-lg border border-[var(--border)] px-4 py-3 text-sm">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <h3 className="font-medium text-[var(--accent)]">Metadata lookup match</h3>
+                            <h3 className="font-medium text-[var(--accent)]">Metadata enrichment preview</h3>
                             <p className="mt-1 text-[var(--muted)]">
                               {smartPreview.result.matchedTitle ?? s.title} - {smartPreview.result.matchedArtist ?? s.artist}
                             </p>
+                            <p className="mt-1 text-xs text-[var(--muted)]">Sources tried: {smartPreview.result.sourcesTried.join(", ")}</p>
                             {smartPreview.result.message && <p className="mt-1 text-xs text-amber-200">{smartPreview.result.message}</p>}
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <button type="button" className="btn btn-primary px-3 py-1.5 text-xs" disabled={savingId === s.id} onClick={() => void applySmartData(s, smartPreview.result)}>
-                              {savingId === s.id ? "Applying" : "Apply metadata"}
+                            <button type="button" className="btn btn-primary px-3 py-1.5 text-xs" disabled={savingId === s.id} onClick={() => void applySmartData(s, smartPreview.result, false)}>
+                              {savingId === s.id ? "Applying" : "Apply missing"}
+                            </button>
+                            <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" disabled={savingId === s.id} onClick={() => void applySmartData(s, smartPreview.result, true)}>
+                              Apply all
                             </button>
                             <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" onClick={() => setSmartPreview(null)}>Cancel</button>
                           </div>
                         </div>
-                        <div className="mt-3 grid gap-2 text-xs text-[var(--muted)] sm:grid-cols-2 lg:grid-cols-4">
-                          <span>Duration: {smartPreview.result.durationSec != null ? formatDuration(smartPreview.result.durationSec) : "unchanged"}</span>
-                          <span>Popularity/Crowd: {smartPreview.result.crowdScore != null ? `${smartPreview.result.crowdScore}/10` : "unchanged"}</span>
-                          <span>Genre: {smartPreview.result.genre ?? "unchanged"}</span>
-                          <span>Vibe: {smartPreview.result.vibe ?? "unchanged"}</span>
-                          <span>Source: {smartPreview.result.source}</span>
+                        <div className="mt-3 overflow-x-auto">
+                          <table className="w-full min-w-[720px] text-left text-xs">
+                            <thead className="text-[var(--muted)]">
+                              <tr>
+                                <th className="pb-2 pr-3">Field</th>
+                                <th className="pb-2 pr-3">Current</th>
+                                <th className="pb-2 pr-3">Proposed</th>
+                                <th className="pb-2 pr-3">Source</th>
+                                <th className="pb-2">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...smartPreview.result.proposals, ...smartPreview.result.unavailable].map((item) => {
+                                const found = item.status === "found";
+                                const fillsMissing = found && canFillMissing(item.current);
+                                return (
+                                  <tr key={`${item.field}-${item.source}`} className="border-t border-[var(--border)]">
+                                    <td className="py-2 pr-3 font-medium text-[var(--text)]">{enrichmentFieldLabel(item.field)}</td>
+                                    <td className="py-2 pr-3 text-[var(--muted)]">{formatPreviewValue(item.current)}</td>
+                                    <td className="py-2 pr-3">{found ? formatPreviewValue(item.proposed) : "not found"}</td>
+                                    <td className="py-2 pr-3 text-[var(--muted)]">
+                                      <span>{item.source}</span>
+                                      {item.note && <span className="block text-[11px]">{item.note}</span>}
+                                    </td>
+                                    <td className="py-2">
+                                      {found ? (
+                                        <span className={fillsMissing ? "text-emerald-300" : "text-amber-200"}>
+                                          {fillsMissing ? "found - will apply by default" : "found - apply all required"}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[var(--muted)]">not found</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     </td>
@@ -989,12 +1112,6 @@ export default function SongsPage() {
     </div>
   );
 }
-
-
-
-
-
-
 
 
 
