@@ -4,8 +4,20 @@ import { authErrorResponse, requireUser } from "@/lib/auth";
 import { lookupSongMetadata } from "@/lib/metadata-lookup";
 
 const body = z.object({
+  id: z.string().optional(),
   title: z.string().min(1),
   artist: z.string().min(1),
+  bpm: z.number().nullable().optional(),
+  musicalKey: z.string().nullable().optional(),
+  durationSec: z.number().nullable().optional(),
+  energy: z.number().nullable().optional(),
+  genre: z.string().nullable().optional(),
+  vibe: z.string().nullable().optional(),
+  crowdScore: z.number().nullable().optional(),
+  danceability: z.number().nullable().optional(),
+  vocalDifficulty: z.number().nullable().optional(),
+  openerCandidate: z.boolean().nullable().optional(),
+  closerCandidate: z.boolean().nullable().optional(),
 });
 
 export async function POST(req: Request) {

@@ -684,7 +684,60 @@ export default function SongsPage() {
   }
 
   async function lookupBpm(song: Song) {
-    await lookupSmartData(song, "/api/bpm-lookup");
+    const identity = lookupIdentity(song);
+    setMsg(null);
+    setSmartPreview(null);
+    setSmartStatus(song.id, `Looking up BPM for ${identity.title} - ${identity.artist}...`);
+    setSmartBusyId(song.id);
+
+    let result: MetadataLookupResult;
+    try {
+      result = await lookupEnrichment(song, "/api/bpm-lookup");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "BPM lookup failed.";
+      setSmartBusyId(null);
+      setSmartStatus(song.id, message);
+      setMsg(message);
+      return;
+    }
+
+    const bpmProposal = result.proposals.find((item) => item.field === "bpm" && item.status === "found" && typeof item.proposed === "number");
+    const durationProposal = result.proposals.find((item) => item.field === "durationSec" && item.status === "found" && typeof item.proposed === "number");
+
+    if (!bpmProposal) {
+      const message = `BPM was not found for ${identity.title} - ${identity.artist}.`;
+      setSmartBusyId(null);
+      setSmartStatus(song.id, message);
+      setMsg(message);
+      return;
+    }
+
+    const body: Record<string, unknown> = { bpm: bpmProposal.proposed };
+    if (durationProposal) body.durationSec = durationProposal.proposed;
+
+    setSavingId(song.id);
+    const response = await fetch(`/api/songs/${song.id}`, {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSavingId(null);
+    setSmartBusyId(null);
+
+    if (!response.ok) {
+      const message = await readErrorMessage(response);
+      setSmartStatus(song.id, message);
+      setMsg(message);
+      return;
+    }
+
+    const updated = (await response.json()) as Song;
+    setSongs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+    if (editingId === updated.id) setEditForm(editFormFromSong(updated));
+    const message = `Updated BPM for ${updated.title}${durationProposal ? " and duration" : ""}.`;
+    setSmartStatus(song.id, message);
+    setMsg(message);
   }
   function lookupIdentity(song: Song) {
     if (editingId !== song.id) return { title: song.title, artist: song.artist };
@@ -1169,17 +1222,19 @@ export default function SongsPage() {
                   </td>
                   <td className="py-2 text-right align-top">
                     {isEditing ? (
-                      <>
+                      <div className="flex flex-wrap justify-end gap-2">
                         <button type="button" className="btn btn-primary mr-2 px-2 py-1 text-xs" disabled={savingId === s.id} onClick={() => void saveEdit(s)}>{savingId === s.id ? "Saving" : "Save"}</button>
+                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Looking..." : "Lookup BPM"}</button>
                         <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setEditingId(null)}>Cancel</button>
-                      </>
+                      </div>
                     ) : (
-                      <>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" onClick={() => startEdit(s)}>Edit</button>
-                        <button type="button" className="btn btn-ghost mr-2 px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => startEdit(s)}>Edit</button>
+                        <button type="button" className="btn btn-ghost px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupBpm(s)}>{smartBusyId === s.id ? "Looking..." : "Lookup BPM"}</button>
+                        <button type="button" className="btn btn-ghost px-2 py-1 text-xs" disabled={anyBulkBusy || smartBusyId === s.id || savingId === s.id} onClick={() => void lookupSmartData(s)}>{smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}</button>
                         <button type="button" className="btn btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => void remove(s.id)}>Del</button>
-                      </>
+                      </div>
                     )}
                   </td>
                 </tr>,
