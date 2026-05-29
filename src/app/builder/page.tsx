@@ -896,6 +896,12 @@ export default function BuilderPage() {
           venueId={venueId}
           bandId={bandId}
           performanceDate={performedAt}
+          eventType={eventType}
+          selectedIds={selected}
+          onAddSong={(id) => {
+            setSelected((current) => new Set([...current, id]));
+            setSetAnalysis(null);
+          }}
           onPickMany={(ids) => {
             setSelected(new Set(ids));
             setHolidayOverrideIds(new Set());
@@ -907,13 +913,54 @@ export default function BuilderPage() {
   );
 }
 
-function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows }: { venueId: string; bandId: string; performanceDate: string; onPickMany: (ids: string[]) => void; onRows: (rows: BuiltSong[]) => void }) {
-  type RecommendationRow = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; recentPlaysAtVenue: number };
+function Recommendations({
+  venueId,
+  bandId,
+  performanceDate,
+  eventType,
+  selectedIds,
+  onAddSong,
+  onPickMany,
+  onRows,
+}: {
+  venueId: string;
+  bandId: string;
+  performanceDate: string;
+  eventType: SetBuildEventType;
+  selectedIds: Set<string>;
+  onAddSong: (id: string) => void;
+  onPickMany: (ids: string[]) => void;
+  onRows: (rows: BuiltSong[]) => void;
+}) {
+  type RecommendationRow = {
+    id: string;
+    title: string;
+    artist: string;
+    bpm: number | null;
+    durationSec: number | null;
+    recentPlaysAtVenue: number;
+    recommendationScore: number;
+    fitLabel: string;
+    reasons: string[];
+    topFactors: string[];
+    scoringDetails: Array<{ label: string; value: string | number }>;
+  };
+  type ExcludedRecommendation = {
+    id: string;
+    title: string;
+    artist: string;
+    recommendationScore: number;
+    fitLabel: string;
+    reasons: string[];
+    scoringDetails: Array<{ label: string; value: string | number }>;
+  };
   type ReplacementPrompt = { songId: string; mode: "choices" | "list" };
 
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   const [rows, setRows] = useState<RecommendationRow[]>([]);
+  const [excluded, setExcluded] = useState<ExcludedRecommendation[]>([]);
+  const [ignoredIds, setIgnoredIds] = useState<Set<string>>(new Set());
   const [targetHours, setTargetHours] = useState("1");
   const [bufferMinutes, setBufferMinutes] = useState("1");
   const [replaceCursor, setReplaceCursor] = useState(0);
@@ -927,29 +974,32 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
     let cancelled = false;
     void (async () => {
       const seed = Date.now();
-      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&performanceDate=${encodeURIComponent(performanceDate)}&seed=${seed}`, { cache: "no-store" });
-      const data = await readObjectResponse<{ ranked?: unknown }>(r, router, "Recommendations").catch((error) => {
+      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&performanceDate=${encodeURIComponent(performanceDate)}&eventType=${encodeURIComponent(eventType)}&seed=${seed}`, { cache: "no-store" });
+      const data = await readObjectResponse<{ ranked?: unknown; excluded?: unknown }>(r, router, "Recommendations").catch((error) => {
         if (!cancelled) setMsg(error instanceof Error ? error.message : "Failed to load recommendations.");
         return null;
       });
       if (!cancelled && Array.isArray(data?.ranked)) {
-        setRows(data.ranked);
+        setRows(data.ranked as RecommendationRow[]);
+        setExcluded(Array.isArray(data.excluded) ? data.excluded as ExcludedRecommendation[] : []);
+        setIgnoredIds(new Set());
         setReplaceCursor(0);
         setReplacementPrompt(null);
-        publishRows(data.ranked);
+        publishRows(data.ranked as RecommendationRow[]);
       }
     })();
     return () => { cancelled = true; };
-  }, [bandId, performanceDate, publishRows, router, venueId]);
+  }, [bandId, eventType, performanceDate, publishRows, router, venueId]);
 
   if (rows.length === 0 && !msg) return null;
+  const activeRows = rows.filter((row) => !ignoredIds.has(row.id));
 
   const targetSeconds = Math.max(0, Number(targetHours) || 0) * 3600;
   const bufferSeconds = Math.max(0, Number(bufferMinutes) || 0) * 60;
   const pickedForDuration: string[] = [];
   let pickedSongSeconds = 0;
   let pickedBufferSeconds = 0;
-  for (const row of rows) {
+  for (const row of activeRows) {
     if (targetSeconds > 0 && pickedSongSeconds + pickedBufferSeconds >= targetSeconds) break;
     pickedForDuration.push(row.id);
     pickedSongSeconds += row.durationSec ?? 0;
@@ -957,7 +1007,24 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
   }
   const pickedSeconds = pickedSongSeconds + pickedBufferSeconds;
   const previewLimit = Math.max(25, pickedForDuration.length);
-  const previewRows = rows.slice(0, previewLimit);
+  const previewRows = activeRows.slice(0, previewLimit);
+
+  function publishActiveRows(nextRows: RecommendationRow[], nextIgnoredIds = ignoredIds) {
+    publishRows(nextRows.filter((row) => !nextIgnoredIds.has(row.id)));
+  }
+
+  function addSong(row: RecommendationRow) {
+    onAddSong(row.id);
+    const nextIgnored = new Set([...ignoredIds, row.id]);
+    setIgnoredIds(nextIgnored);
+    publishActiveRows(rows, nextIgnored);
+  }
+
+  function ignoreSong(row: RecommendationRow) {
+    const nextIgnored = new Set([...ignoredIds, row.id]);
+    setIgnoredIds(nextIgnored);
+    publishActiveRows(rows, nextIgnored);
+  }
 
   function replaceSuggestedPick(songId: string) {
     const currentRows = rows;
@@ -984,7 +1051,7 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
     setReplaceCursor(visibleLimit + ((replacementIndex - visibleLimit + 1) % hiddenCount));
     setRows(nextRows);
     setReplacementPrompt(null);
-    publishRows(nextRows);
+    publishActiveRows(nextRows);
     return true;
   }
 
@@ -1004,13 +1071,13 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
     [nextRows[visibleIndex], nextRows[replacementIndex]] = [nextRows[replacementIndex], nextRows[visibleIndex]];
     setRows(nextRows);
     setReplacementPrompt(null);
-    publishRows(nextRows);
+    publishActiveRows(nextRows);
   }
 
   return (
     <div className="card">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-medium">Suggested next picks at this venue for this band</h2>
+        <h2 className="font-medium">Venue-Aware Recommendations</h2>
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-[var(--muted)]">
             Target hours
@@ -1026,7 +1093,7 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
         </div>
       </div>
       <p className="mb-3 text-xs text-[var(--muted)]">
-        Lower recent plays means less repetition for this band at this venue. Showing {previewRows.length} picks. Selected time includes {formatDuration(pickedSongSeconds)} of songs plus {formatDuration(pickedBufferSeconds)} of between-song buffer.
+        Ranked for the selected Build Set For profile, venue history, band, performance date, and song metadata. Showing {previewRows.length} picks. Selected time includes {formatDuration(pickedSongSeconds)} of songs plus {formatDuration(pickedBufferSeconds)} of between-song buffer.
       </p>
       {msg && <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{msg}</div>}
       <ul className="grid gap-2 sm:grid-cols-2">
@@ -1038,15 +1105,27 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   {r.title} <span className="text-[var(--muted)]">- {r.artist}</span>
-                  <div className="mono mt-1 text-xs text-[var(--muted)]">recent plays: {r.recentPlaysAtVenue} {r.durationSec != null && `- ${formatDuration(r.durationSec)}`}</div>
+                  <div className="mono mt-1 text-xs text-[var(--muted)]">{r.fitLabel}: {r.recommendationScore.toFixed(1)}/10 · recent plays: {r.recentPlaysAtVenue} {r.durationSec != null && `- ${formatDuration(r.durationSec)}`}</div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">
+                    <div className="font-medium text-[var(--text)]">Why recommended:</div>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {(r.topFactors.length > 0 ? r.topFactors : r.reasons).slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
+                    </ul>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost px-2 py-1 text-xs"
-                  onClick={() => setReplacementPrompt(promptIsOpen ? null : { songId: r.id, mode: "choices" })}
-                >
-                  Replace
-                </button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button type="button" className="btn btn-primary px-2 py-1 text-xs" disabled={selectedIds.has(r.id)} onClick={() => addSong(r)}>
+                    {selectedIds.has(r.id) ? "Added" : "Add Song"}
+                  </button>
+                  <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => ignoreSong(r)}>Ignore Song</button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost px-2 py-1 text-xs"
+                    onClick={() => setReplacementPrompt(promptIsOpen ? null : { songId: r.id, mode: "choices" })}
+                  >
+                    Replace
+                  </button>
+                </div>
               </div>
               {promptIsOpen && (
                 <div className="mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
@@ -1071,11 +1150,48 @@ function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows 
                   )}
                 </div>
               )}
+              <ScoringDetails label={r.fitLabel} details={r.scoringDetails} />
             </li>
           );
         })}
       </ul>
+      {excluded.length > 0 && (
+        <details className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
+          <summary className="cursor-pointer text-amber-100">Excluded songs ({excluded.length})</summary>
+          <ul className="mt-2 space-y-1 text-[var(--muted)]">
+            {excluded.map((song) => (
+              <li key={song.id} className="rounded-md border border-[var(--border)] px-2 py-2">
+                <div className="font-medium text-[var(--text)]">{song.title} <span className="font-normal text-[var(--muted)]">- {song.artist}</span></div>
+                <div className="mono mt-1 text-[var(--muted)]">{song.fitLabel}: {song.recommendationScore.toFixed(1)}/10</div>
+                <div className="mt-2 text-amber-100">Not recommended because:</div>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {song.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+                <ScoringDetails label={song.fitLabel} details={song.scoringDetails} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
+  );
+}
+
+function ScoringDetails({ label, details }: { label: string; details: Array<{ label: string; value: string | number }> }) {
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-[var(--accent)]">View scoring details</summary>
+      <div className="mt-2 rounded-md border border-[var(--border)] px-2 py-2">
+        <div className="mb-1 font-medium text-[var(--text)]">{label} Score:</div>
+        <ul className="list-disc space-y-0.5 pl-4 text-[var(--muted)]">
+          {details.map((detail) => (
+            <li key={detail.label}>
+              {detail.label}: <span className="text-[var(--text)]">{detail.value}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
   );
 }
 

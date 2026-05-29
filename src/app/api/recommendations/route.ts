@@ -1,6 +1,6 @@
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
-import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
+import { getVenueSongPlayCounts, poorRecommendationReasons, scoreVenueAwareRecommendation, type RecommendationEventType } from "@/lib/recommendations";
 import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 export const dynamic = "force-dynamic";
@@ -11,24 +11,30 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const venueId = url.searchParams.get("venueId");
     const bandId = url.searchParams.get("bandId") || undefined;
+    const eventType = parseEventType(url.searchParams.get("eventType"));
     if (!venueId) return privateJson({ error: "venueId required" }, { status: 400 });
     if (bandId) await requireBandAccess(user, bandId);
     if (!bandId && user.role !== "admin") return privateJson({ error: "bandId required" }, { status: 400 });
 
   const allSongs = (await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)")).rows.map(mapSong);
   const performanceDate = url.searchParams.get("performanceDate");
-  const excludedHolidayIds = new Set(holidaySongsOutsideSeason(allSongs, performanceDate).map((song) => song.id));
+  const holidayExcluded = holidaySongsOutsideSeason(allSongs, performanceDate);
+  const excludedHolidayIds = new Set(holidayExcluded.map((song) => song.id));
   const seed = Number(url.searchParams.get("seed") ?? Date.now());
   const counts = await getVenueSongPlayCounts(venueId, bandId);
 
   const ranked = allSongs
     .filter((song) => !excludedHolidayIds.has(song.id))
-    .map((s) => ({ song: s, plays: counts.get(s.id) ?? 0, score: scoreSongForRecommendation(s.id, counts), tie: seededSongTie(s.id, seed) }))
+    .map((s) => {
+      const recommendation = scoreVenueAwareRecommendation(s, counts, eventType);
+      return { song: s, plays: counts.get(s.id) ?? 0, ...recommendation, tie: seededSongTie(s.id, seed) };
+    })
     .sort((a, b) => b.score - a.score || a.plays - b.plays || a.tie - b.tie);
 
     return privateJson({
     venueId,
     bandId: bandId ?? null,
+    eventType,
     ranked: ranked.map((r) => ({
       id: r.song.id,
       title: r.song.title,
@@ -36,12 +42,35 @@ export async function GET(req: Request) {
       bpm: r.song.bpm,
       durationSec: r.song.durationSec,
       recentPlaysAtVenue: r.plays,
+      recommendationScore: Math.round(r.score * 10) / 10,
+      fitLabel: r.fitLabel,
+      reasons: r.reasons,
+      topFactors: r.topFactors,
+      scoringDetails: r.scoringDetails,
     })),
+    excluded: holidayExcluded.map((song) => {
+      const recommendation = scoreVenueAwareRecommendation(song, counts, eventType);
+      return {
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        recommendationScore: Math.round(recommendation.score * 10) / 10,
+        fitLabel: recommendation.fitLabel,
+        reasons: ["Holiday song outside season", ...poorRecommendationReasons(song, eventType)].slice(0, 3),
+        scoringDetails: recommendation.scoringDetails,
+      };
+    }),
     });
   } catch (error) {
     return authErrorResponse(error);
   }
 }
+
+function parseEventType(value: string | null): RecommendationEventType {
+  if (value === "brewery" || value === "private-party" || value === "wedding" || value === "corporate-event") return value;
+  return "bar-crowd";
+}
+
 function seededSongTie(id: string, seed: number) {
   let hash = seed || 2166136261;
   for (let i = 0; i < id.length; i++) {
