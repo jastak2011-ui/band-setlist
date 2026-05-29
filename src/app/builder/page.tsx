@@ -7,6 +7,7 @@ import { isHolidayActiveDate, isHolidayGenre } from "@/lib/seasonality";
 
 type Song = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre: string | null };
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
+type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
@@ -23,6 +24,7 @@ type SetAnalysis = {
   averageEngagementScore: number;
   averageEnergyScore: number;
   excludedHolidaySongs: Array<{ songId: string; title: string }>;
+  eventType: { value: SetBuildEventType; label: string; priorities: string[] };
 };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
@@ -293,6 +295,11 @@ function SetAnalysisPanel({ analysis }: { analysis: SetAnalysis }) {
     <details className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-sm">
       <summary className="cursor-pointer font-medium text-[var(--accent)]">Set Analysis</summary>
       <div className="mt-3 space-y-4">
+        <div className="rounded-md border border-[var(--border)] px-3 py-2">
+          <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Built for</div>
+          <div className="mt-1 font-medium">{analysis.eventType.label}</div>
+          <div className="mt-1 text-xs text-[var(--muted)]">Priorities: {analysis.eventType.priorities.join(" · ")}</div>
+        </div>
         {analysis.excludedHolidaySongs.length > 0 && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
             Excluded {analysis.excludedHolidaySongs.length} Holiday song{analysis.excludedHolidaySongs.length === 1 ? "" : "s"} outside the holiday season.
@@ -405,6 +412,7 @@ export default function BuilderPage() {
   const [performedAt, setPerformedAt] = useState(todayForDateInput);
   const [numSets, setNumSets] = useState(2);
   const [strategy, setStrategy] = useState<SetlistStrategy>("balanced");
+  const [eventType, setEventType] = useState<SetBuildEventType>("bar-crowd");
   const [avoidSameArtist, setAvoidSameArtist] = useState(true);
   const [avoidSameGenre, setAvoidSameGenre] = useState(true);
   const [avoidBigBpmDrops, setAvoidBigBpmDrops] = useState(true);
@@ -592,6 +600,7 @@ export default function BuilderPage() {
         performedAt,
         allowHolidaySongIds: Array.from(holidayOverrideIds).filter((id) => selected.has(id)),
         strategy,
+        eventType,
         avoidSameArtist,
         avoidSameGenre,
         avoidBigBpmDrops,
@@ -762,6 +771,19 @@ export default function BuilderPage() {
             <label className="block text-sm text-[var(--muted)]">
               Number of sets
               <input type="number" min={1} max={12} className="input mt-1" value={numSets} onChange={(e) => changeNumSets(Number(e.target.value))} />
+            </label>
+            <label className="block text-sm text-[var(--muted)]">
+              Build Set For
+              <select className="input mt-1" value={eventType} onChange={(e) => {
+                setEventType(e.target.value as SetBuildEventType);
+                setSetAnalysis(null);
+              }}>
+                <option value="bar-crowd">Bar Crowd</option>
+                <option value="brewery">Brewery</option>
+                <option value="private-party">Private Party</option>
+                <option value="wedding">Wedding</option>
+                <option value="corporate-event">Corporate Event</option>
+              </select>
             </label>
             <div className="rounded-lg border border-[var(--border)] px-3 py-3">
               <label className="block text-sm text-[var(--muted)]">

@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { querySongsByIds } from "@/lib/db";
-import { buildSets, explainBuiltSets, type SongForSet } from "@/lib/set-builder";
+import { buildSets, explainBuiltSets, type SetBuildEventType, type SongForSet } from "@/lib/set-builder";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
 import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 const strategy = z.enum(["balanced", "high-energy", "dance-heavy", "singalong-heavy", "acoustic-chill", "build-slowly"]);
+const eventType = z.enum(["bar-crowd", "brewery", "private-party", "wedding", "corporate-event"]);
 
 const body = z.object({
   songIds: z.array(z.string()).min(1),
@@ -13,6 +14,7 @@ const body = z.object({
   venueId: z.string().optional(),
   bandId: z.string().optional(),
   strategy: strategy.optional(),
+  eventType: eventType.optional(),
   avoidSameArtist: z.boolean().optional(),
   avoidSameGenre: z.boolean().optional(),
   avoidBigBpmDrops: z.boolean().optional(),
@@ -53,6 +55,7 @@ export async function POST(req: Request) {
     energy: r.energy,
     genre: r.genre,
     vibe: r.vibe,
+    notes: r.notes,
     crowdScore: r.crowdScore,
     danceability: r.danceability,
     vocalDifficulty: r.vocalDifficulty,
@@ -76,6 +79,7 @@ export async function POST(req: Request) {
 
   const buildOptions = {
     strategy: parsed.data.strategy,
+    eventType: parsed.data.eventType,
     avoidSameArtist: parsed.data.avoidSameArtist,
     avoidSameGenre: parsed.data.avoidSameGenre,
     avoidBigBpmDrops: parsed.data.avoidBigBpmDrops,
@@ -112,7 +116,7 @@ export async function POST(req: Request) {
         genre: s.genre,
       })),
     })),
-    explainability: explainBuiltSets(sets, { excludedHolidaySongs }),
+    explainability: explainBuiltSets(sets, { eventType: parsed.data.eventType as SetBuildEventType | undefined, excludedHolidaySongs }),
   });
   } catch (error) {
     return authErrorResponse(error);

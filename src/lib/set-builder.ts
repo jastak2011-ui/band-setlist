@@ -1,7 +1,10 @@
 ﻿export type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 
+export type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
+
 export type SmartBuildOptions = {
   strategy?: SetlistStrategy;
+  eventType?: SetBuildEventType;
   avoidSameArtist?: boolean;
   avoidSameGenre?: boolean;
   avoidBigBpmDrops?: boolean;
@@ -19,6 +22,7 @@ export type SongForSet = {
   energy: number | null;
   genre?: string | null;
   vibe?: string | null;
+  notes?: string | null;
   crowdScore?: number | null;
   danceability?: number | null;
   vocalDifficulty?: number | null;
@@ -43,15 +47,40 @@ export type SetBuildExplanation = {
   averageEngagementScore: number;
   averageEnergyScore: number;
   excludedHolidaySongs: Array<{ songId: string; title: string }>;
+  eventType: { value: SetBuildEventType; label: string; priorities: string[] };
 };
 
 const defaultOptions: Required<SmartBuildOptions> = {
   strategy: "balanced",
+  eventType: "bar-crowd",
   avoidSameArtist: true,
   avoidSameGenre: true,
   avoidBigBpmDrops: true,
   avoidHardVocals: true,
   saveStrongestForLater: true,
+};
+
+const eventTypeProfiles: Record<SetBuildEventType, { label: string; priorities: string[] }> = {
+  "bar-crowd": {
+    label: "Bar Crowd",
+    priorities: ["Energy", "Crowd familiarity", "Singalong", "Danceability", "Female participation", "Peak hour"],
+  },
+  brewery: {
+    label: "Brewery",
+    priorities: ["Familiarity", "Energy", "Singalong", "Broad age appeal", "Moderate peak-hour pressure"],
+  },
+  "private-party": {
+    label: "Private Party",
+    priorities: ["Singalong", "Familiarity", "Danceability", "Broad age appeal", "Female participation", "Balanced energy"],
+  },
+  wedding: {
+    label: "Wedding",
+    priorities: ["Singalong", "Female participation", "Danceability", "All Ages appeal", "Crowd familiarity", "Smooth transitions"],
+  },
+  "corporate-event": {
+    label: "Corporate Event",
+    priorities: ["Crowd familiarity", "Broad age appeal", "Mainstream safety", "Moderate energy", "Transition flexibility"],
+  },
 };
 
 function effectiveBpm(song: SongForSet): number {
@@ -82,6 +111,41 @@ function audienceEngagementScore(song: SongForSet) {
   );
 }
 
+function broadAgeAppeal(song: SongForSet) {
+  const ages = new Set(song.audienceAgeAppeal ?? []);
+  if (ages.has("All Ages")) return 1;
+  return Math.min(1, ages.size / 4);
+}
+
+function hasAllAgesAppeal(song: SongForSet) {
+  return song.audienceAgeAppeal?.includes("All Ages") ? 1 : 0;
+}
+
+function cleanMainstreamScore(song: SongForSet) {
+  const text = [song.title, song.artist, song.genre, song.vibe, song.notes].filter(Boolean).join(" ").toLowerCase();
+  const explicit = /\b(explicit|offensive|dirty|nsfw|profane|profanity|raunchy)\b/.test(text);
+  const niche = /\b(punk|metal|hardcore|edm|rap|hip hop|trap|industrial)\b/.test(text);
+  return Math.max(0, 1 - (explicit ? 0.75 : 0) - (niche ? 0.25 : 0));
+}
+
+function eventTypeScore(song: SongForSet, eventType: SetBuildEventType) {
+  const crowd = scoreValue(song.crowdScore);
+  const dance = scoreValue(song.danceability);
+  const singalong = scoreValue(song.singalongScore, crowd);
+  const female = scoreValue(song.femaleParticipationScore, dance);
+  const peak = scoreValue(song.peakHourScore, Math.max(crowd, dance));
+  const flex = scoreValue(song.transitionFlexibility);
+  const energy = effectiveEnergy(song);
+  const broadAge = broadAgeAppeal(song);
+  const allAges = hasAllAgesAppeal(song);
+  const safe = cleanMainstreamScore(song);
+  if (eventType === "brewery") return crowd * 0.28 + energy * 0.2 + singalong * 0.19 + broadAge * 0.19 + dance * 0.08 + peak * 0.06;
+  if (eventType === "private-party") return singalong * 0.27 + crowd * 0.24 + dance * 0.18 + broadAge * 0.16 + female * 0.1 + (1 - Math.abs(energy - 0.65)) * 0.05;
+  if (eventType === "wedding") return singalong * 0.28 + female * 0.21 + dance * 0.19 + allAges * 0.14 + crowd * 0.13 + flex * 0.05;
+  if (eventType === "corporate-event") return crowd * 0.28 + broadAge * 0.22 + safe * 0.18 + (1 - Math.abs(energy - 0.58)) * 0.16 + flex * 0.16;
+  return energy * 0.22 + crowd * 0.22 + singalong * 0.18 + dance * 0.16 + female * 0.12 + peak * 0.1;
+}
+
 function sameText(a: string | null | undefined, b: string | null | undefined) {
   return Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
 }
@@ -95,10 +159,11 @@ function songStrength(song: SongForSet, options: Required<SmartBuildOptions>) {
   const flex = scoreValue(song.transitionFlexibility);
   const energy = effectiveEnergy(song);
   const engagement = audienceEngagementScore(song);
+  const eventFit = eventTypeScore(song, options.eventType);
   if (options.strategy === "dance-heavy") return dance * 0.32 + female * 0.22 + peak * 0.18 + crowd * 0.14 + energy * 0.14;
   if (options.strategy === "singalong-heavy") return singalong * 0.38 + crowd * 0.26 + female * 0.14 + peak * 0.12 + energy * 0.1;
   if (options.strategy === "acoustic-chill") return crowd * 0.28 + flex * 0.26 + (1 - energy) * 0.22 + singalong * 0.14 + dance * 0.1;
-  return engagement * 0.42 + energy * 0.18 + peak * 0.16 + flex * 0.12 + crowd * 0.12;
+  return eventFit * 0.46 + engagement * 0.24 + energy * 0.12 + peak * 0.08 + flex * 0.06 + crowd * 0.04;
 }
 
 function targetEnergy(slotIndex: number, setLength: number, options: Required<SmartBuildOptions>) {
@@ -211,6 +276,7 @@ function chooseSongForSlot(
     const female = scoreValue(candidate.femaleParticipationScore, dance);
     const vocal = scoreValue(candidate.vocalDifficulty, 0.35);
     const engagement = audienceEngagementScore(candidate);
+    const eventFit = eventTypeScore(candidate, options.eventType);
     const strength = songStrength(candidate, options);
     const peakSong = peak >= 0.8;
 
@@ -222,7 +288,21 @@ function chooseSongForSlot(
     else if (options.strategy === "singalong-heavy") score += singalong * 2.6 + crowd * 1.4 + female * 0.8;
     else if (options.strategy === "acoustic-chill") score += (1 - energy) * 2 + crowd;
     else if (options.strategy === "high-energy") score += energy * 1.8 + peak * 1.4 + dance + female * 0.7;
-    else score += engagement * 3 + energy * 0.8 + peak * 1.2 + flex * 0.5;
+    else score += engagement * 2.2 + eventFit * 2 + energy * 0.6 + peak * 0.8 + flex * 0.4;
+
+    score += eventFit * 3;
+    if (options.eventType === "brewery" && peakSong) score -= 0.8;
+    if (options.eventType === "wedding") {
+      if (crowd < 0.45) score -= 3;
+      if (dance < 0.45) score -= 3;
+      if (transitionNeedsFlex(candidate, previous) && flex < 0.45) score -= 2.5;
+    }
+    if (options.eventType === "corporate-event") {
+      score += (1 - Math.abs(energy - 0.58)) * 2;
+      if (broadAgeAppeal(candidate) < 0.35) score -= 3;
+      if (cleanMainstreamScore(candidate) < 0.65) score -= 4;
+      if (peakSong && energy > 0.82) score -= 1.5;
+    }
 
     // Openers should feel known and awake; closers should feel strong, familiar, and high-impact.
     if (firstSlot) score += (candidate.openerCandidate ? 10 : 0) + crowd * 2.4 + energy * 2.2 + engagement * 1.2 - (energy < 0.45 ? 6 : 0) - (engagement < 0.45 ? 4 : 0);
@@ -319,7 +399,7 @@ function explainSet(set: SongForSet[], setIndex: number) {
 
 export function explainBuiltSets(
   sets: SongForSet[][],
-  options: { excludedHolidaySongs?: Array<{ id: string; title: string }> } = {},
+  options: { eventType?: SetBuildEventType; excludedHolidaySongs?: Array<{ id: string; title: string }> } = {},
 ): SetBuildExplanation {
   const allSongs = sets.flat();
   const setReasons = sets.map((set, index) => explainSet(set, index + 1));
@@ -358,6 +438,10 @@ export function explainBuiltSets(
     averageEngagementScore,
     averageEnergyScore,
     excludedHolidaySongs: (options.excludedHolidaySongs ?? []).map((song) => ({ songId: song.id, title: song.title })),
+    eventType: {
+      value: options.eventType ?? defaultOptions.eventType,
+      ...eventTypeProfiles[options.eventType ?? defaultOptions.eventType],
+    },
   };
 }
 
