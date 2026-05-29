@@ -10,6 +10,18 @@ type Band = { id: string; name: string };
 type Venue = { id: string; name: string };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; importIndex?: number };
 type Built = { index: number; songs: BuiltSong[] };
+type SetAnalysisReason = { setIndex: number; songId: string; title: string; reasons: string[] };
+type SetAnalysisScore = { songId: string; title: string; score: number };
+type SetAnalysis = {
+  openerReasons: SetAnalysisReason[];
+  closerReasons: SetAnalysisReason[];
+  topEngagementSongs: SetAnalysisScore[];
+  peakHourSongs: SetAnalysisScore[];
+  energyFlowMoves: string[];
+  audienceAgeDistribution: Array<{ age: string; count: number }>;
+  averageEngagementScore: number;
+  averageEnergyScore: number;
+};
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
@@ -214,6 +226,10 @@ function totalDuration(songs: { durationSec: number | null }[]) {
   return songs.reduce((sum, song) => sum + (song.durationSec ?? 0), 0);
 }
 
+function formatScore(value: number | null | undefined) {
+  return value == null ? "-" : `${value}/10`;
+}
+
 function shuffleSongs(songs: BuiltSong[]) {
   const shuffled = [...songs];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -269,6 +285,104 @@ function fitImportedSetsToCount(importedSets: Built[], targetCount: number) {
   return chunkSongsInOrder(flattenSetsInOrder(importedSets), setCount);
 }
 
+function SetAnalysisPanel({ analysis }: { analysis: SetAnalysis }) {
+  const topEngagement = analysis.topEngagementSongs.slice(0, 5);
+  return (
+    <details className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-sm">
+      <summary className="cursor-pointer font-medium text-[var(--accent)]">Set Analysis</summary>
+      <div className="mt-3 space-y-4">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-[var(--border)] px-3 py-2">
+            <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Average engagement</div>
+            <div className="mt-1 font-medium">{formatScore(analysis.averageEngagementScore)}</div>
+          </div>
+          <div className="rounded-md border border-[var(--border)] px-3 py-2">
+            <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Average energy</div>
+            <div className="mt-1 font-medium">{formatScore(analysis.averageEnergyScore)}</div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <AnalysisReasonList title="Why opener was selected" rows={analysis.openerReasons} emptyText="No opener analysis returned." />
+          <AnalysisReasonList title="Why closer was selected" rows={analysis.closerReasons} emptyText="No closer analysis returned." />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <AnalysisScoreList title="Top 5 engagement songs" rows={topEngagement} emptyText="No engagement scores returned." />
+          <AnalysisScoreList title="Peak-hour songs identified" rows={analysis.peakHourSongs} emptyText="No peak-hour songs identified." />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Songs moved for energy-flow reasons</h3>
+            {analysis.energyFlowMoves.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+                {analysis.energyFlowMoves.map((move) => <li key={move}>{move}</li>)}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-[var(--muted)]">No energy-flow moves flagged.</p>
+            )}
+          </div>
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Audience age distribution</h3>
+            {analysis.audienceAgeDistribution.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {analysis.audienceAgeDistribution.map((item) => (
+                  <span key={item.age} className="rounded-full border border-[var(--border)] px-2 py-1 text-xs">
+                    {item.age}: {item.count}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-[var(--muted)]">No age appeal metadata available.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function AnalysisReasonList({ title, rows, emptyText }: { title: string; rows: SetAnalysisReason[]; emptyText: string }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{title}</h3>
+      {rows.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {rows.map((row) => (
+            <li key={`${row.setIndex}-${row.songId}`}>
+              <div className="font-medium">Set {row.setIndex}: {row.title}</div>
+              <div className="text-xs text-[var(--muted)]">{row.reasons.join(" · ")}</div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-[var(--muted)]">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function AnalysisScoreList({ title, rows, emptyText }: { title: string; rows: SetAnalysisScore[]; emptyText: string }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{title}</h3>
+      {rows.length > 0 ? (
+        <ol className="mt-2 list-decimal space-y-1 pl-5">
+          {rows.map((row) => (
+            <li key={row.songId}>
+              <span className="font-medium">{row.title}</span>
+              <span className="text-xs text-[var(--muted)]"> · {formatScore(row.score)}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="mt-2 text-xs text-[var(--muted)]">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
 export default function BuilderPage() {
   const router = useRouter();
   const [songs, setSongs] = useState<Song[]>([]);
@@ -286,6 +400,7 @@ export default function BuilderPage() {
   const [avoidHardVocals, setAvoidHardVocals] = useState(true);
   const [saveStrongestForLater, setSaveStrongestForLater] = useState(true);
   const [sets, setSets] = useState<Built[] | null>(null);
+  const [setAnalysis, setSetAnalysis] = useState<SetAnalysis | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
@@ -334,6 +449,7 @@ export default function BuilderPage() {
   function changeNumSets(value: number) {
     const nextCount = clampSetCount(value);
     setNumSets(nextCount);
+    setSetAnalysis(null);
     if (importSummary) {
       setSets((current) => (current ? fitImportedSetsToCount(current, nextCount) : current));
     }
@@ -343,6 +459,7 @@ export default function BuilderPage() {
     if (!file) return;
     setMsg(null);
     setSets(null);
+    setSetAnalysis(null);
 
     const html = await file.text();
     const detected = parseMetadataFromFileName(file.name, bands, venues);
@@ -387,6 +504,7 @@ export default function BuilderPage() {
     const key = `${importedSong.setIndex}-${importedSong.importIndex}-${importedSong.title}-${importedSong.artist}`;
     setAddingImportKey(key);
     setMsg(null);
+    setSetAnalysis(null);
 
     const response = await fetch("/api/songs", {
       method: "POST",
@@ -450,18 +568,20 @@ export default function BuilderPage() {
       setMsg(await readErrorMessage(r));
       return;
     }
-    const data = await readObjectResponse<{ sets?: Built[] }>(r, router, "Build sets");
+    const data = await readObjectResponse<{ sets?: Built[]; explainability?: SetAnalysis }>(r, router, "Build sets");
     if (!Array.isArray(data?.sets)) {
       setMsg("Build response did not include sets.");
       return;
     }
     setImportSummary(null);
     setSets(data.sets);
+    setSetAnalysis(data.explainability ?? null);
   }
 
   function reshuffle() {
     if (!sets) return;
     setSets(distributeSongs(shuffleSongs(sets.flatMap((set) => set.songs)), sets.length));
+    setSetAnalysis(null);
     setMsg("Sets reshuffled.");
   }
 
@@ -493,6 +613,7 @@ export default function BuilderPage() {
     }
 
     let previousTitle = "song";
+    setSetAnalysis(null);
     setSets((current) =>
       current?.map((set) =>
         set.index === setIndex
@@ -677,6 +798,7 @@ export default function BuilderPage() {
                 <h2 className="font-medium">Built sets</h2>
                 <button type="button" disabled={busy} className="btn btn-ghost px-3 py-1 text-xs" onClick={reshuffle}>Reshuffle sets</button>
               </div>
+              {setAnalysis && <SetAnalysisPanel analysis={setAnalysis} />}
               {sets.map((st) => {
                 const setDuration = totalDuration(st.songs);
                 return (

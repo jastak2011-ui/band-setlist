@@ -197,6 +197,12 @@ function listenersToCrowdScore(listenersValue?: string, playcountValue?: string)
   return Math.max(1, Math.min(10, Math.round(Math.log10(popularity) * 1.5)));
 }
 
+function popularityComponent(value?: string, multiplier = 1.2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(1, Math.min(10, Math.log10(numeric) * multiplier));
+}
+
 function tagNames(track: LastFmTrack | null) {
   return (track?.toptags?.tag ?? []).map((tag) => tag.name).filter((tag): tag is string => Boolean(tag));
 }
@@ -206,7 +212,38 @@ function pickGroup(tags: string[], groups: Array<{ label: string; tags: string[]
   return groups.find((group) => group.tags.some((tag) => normalizedTags.some((candidate) => candidate.includes(normalize(tag)))))?.label ?? null;
 }
 
-function inferFromTags(tags: string[]) {
+function weightedTagScore(tags: string[], weights: Array<{ tags: string[]; weight: number }>) {
+  const normalizedTags = tags.map(normalize);
+  return weights.reduce((score, item) => {
+    const matched = item.tags.some((tag) => normalizedTags.some((candidate) => candidate.includes(normalize(tag))));
+    return matched ? score + item.weight : score;
+  }, 0);
+}
+
+function inferSingalongScore(tags: string[], track: LastFmTrack | null, crowdScore: number | null) {
+  const tagScore = Math.min(10, weightedTagScore(tags, [
+    { tags: ["singalong", "sing-along", "crowd favorite", "pop anthem"], weight: 2.6 },
+    { tags: ["anthem"], weight: 2.4 },
+    { tags: ["karaoke"], weight: 2.2 },
+    { tags: ["wedding"], weight: 1.8 },
+    { tags: ["classic", "classic rock"], weight: 1.7 },
+    { tags: ["hit", "hits"], weight: 1.6 },
+    { tags: ["popular"], weight: 1.5 },
+    { tags: ["mainstream"], weight: 1.4 },
+    { tags: ["love song", "love songs"], weight: 1.3 },
+    { tags: ["ballad"], weight: 1.2 },
+    { tags: ["acoustic"], weight: 1.1 },
+    { tags: ["singer-songwriter", "singer songwriter"], weight: 1.1 },
+  ]));
+  const listenerScore = popularityComponent(track?.listeners, 1.25);
+  const playScore = popularityComponent(track?.playcount, 1.1);
+  const crowd = crowdScore ?? listenersToCrowdScore(track?.listeners, track?.playcount);
+  const score = (tagScore * 0.55) + ((crowd ?? 0) * 0.3) + (listenerScore * 0.1) + (playScore * 0.05);
+  if (score <= 0) return null;
+  return Math.max(1, Math.min(10, Math.round(score)));
+}
+
+function inferFromTags(tags: string[], track: LastFmTrack | null = null) {
   const normalizedTags = tags.map(normalize);
   const includes = (values: string[]) => values.some((value) => normalizedTags.some((tag) => tag.includes(normalize(value))));
   const inferred: {
@@ -255,7 +292,6 @@ function inferFromTags(tags: string[]) {
   }
   if (includes(["anthem", "singalong", "sing-along", "classic rock", "karaoke", "crowd favorite", "pop anthem"])) {
     inferred.crowdScore = Math.max(inferred.crowdScore ?? 0, 0.85);
-    inferred.singalongScore = Math.max(inferred.singalongScore ?? 0, 0.85);
     inferred.closerCandidate = true;
   }
   if (includes(["party", "festival favorite", "high energy"])) inferred.peakHourScore = Math.max(inferred.peakHourScore ?? 0, 0.82);
@@ -277,6 +313,7 @@ function inferFromTags(tags: string[]) {
   if (includes(["2010s", "2020s", "tiktok", "modern pop"])) ages.add("Gen Z");
   if (includes(["mainstream", "pop", "party", "wedding", "crowd favorite"])) ages.add("All Ages");
   inferred.audienceAgeAppeal = filterAudienceAgeAppeal([...ages]);
+  inferred.singalongScore = inferSingalongScore(tags, track, inferred.crowdScore ?? null);
 
   return inferred;
 }
@@ -393,7 +430,7 @@ export async function lookupSongMetadata(input: EnrichmentSongInput | string, ma
   const lastfm = await lookupLastFm(matchedTitle, matchedArtist);
   if (lastfm.message) messages.push(lastfm.message);
   const tags = tagNames(lastfm.track);
-  const inferred = inferFromTags(tags);
+  const inferred = inferFromTags(tags, lastfm.track);
   if (lastfm.track) {
     proposals.push(
       ...[
@@ -406,7 +443,7 @@ export async function lookupSongMetadata(input: EnrichmentSongInput | string, ma
         proposal(song, "danceability", inferred.danceability, "lastfm-tags", "Conservative tag inference."),
         proposal(song, "energy", inferred.energy, "lastfm-tags", "Conservative tag inference."),
         proposal(song, "vocalDifficulty", inferred.vocalDifficulty, "lastfm-tags", "Conservative tag inference."),
-        proposal(song, "singalongScore", inferred.singalongScore, "lastfm-tags", "Inferred from singalong, anthem, karaoke, and popularity tags."),
+        proposal(song, "singalongScore", inferred.singalongScore, "lastfm-tags", "Formula: round((tag score * 0.55) + (crowd familiarity * 0.30) + (listener score * 0.10) + (play count score * 0.05)). Tag score weights wedding, ballad, acoustic, love song, anthem, classic, karaoke, popular, mainstream, hit, and singer-songwriter signals."),
         proposal(song, "peakHourScore", inferred.peakHourScore, "lastfm-tags", "Inferred from party, dance, high-energy, and crowd-favorite tags."),
         proposal(song, "transitionFlexibility", inferred.transitionFlexibility, "lastfm-tags", "Inferred from midtempo, acoustic, crossover, mainstream, or versatile tags."),
         proposal(song, "audienceAgeAppeal", inferred.audienceAgeAppeal, "lastfm-tags", "Inferred from decade, genre, and mainstream tags."),

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { querySongsByIds } from "@/lib/db";
-import { buildSets, type SongForSet } from "@/lib/set-builder";
+import { buildSets, explainBuiltSets, type SongForSet } from "@/lib/set-builder";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
 
 const strategy = z.enum(["balanced", "high-energy", "dance-heavy", "singalong-heavy", "acoustic-chill", "build-slowly"]);
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     peakHourScore: r.peakHourScore,
     transitionFlexibility: r.transitionFlexibility,
     femaleParticipationScore: r.femaleParticipationScore,
+    audienceAgeAppeal: r.audienceAgeAppeal,
     openerCandidate: r.openerCandidate,
     closerCandidate: r.closerCandidate,
     capoOrTuning: r.capoOrTuning,
@@ -100,6 +101,7 @@ export async function POST(req: Request) {
         energy: s.energy,
       })),
     })),
+    explainability: explainBuiltSets(sets),
   });
   } catch (error) {
     return authErrorResponse(error);
