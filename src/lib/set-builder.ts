@@ -42,6 +42,7 @@ export type SetBuildExplanation = {
   audienceAgeDistribution: Array<{ age: string; count: number }>;
   averageEngagementScore: number;
   averageEnergyScore: number;
+  excludedHolidaySongs: Array<{ songId: string; title: string }>;
 };
 
 const defaultOptions: Required<SmartBuildOptions> = {
@@ -316,7 +317,10 @@ function explainSet(set: SongForSet[], setIndex: number) {
   };
 }
 
-export function explainBuiltSets(sets: SongForSet[][]): SetBuildExplanation {
+export function explainBuiltSets(
+  sets: SongForSet[][],
+  options: { excludedHolidaySongs?: Array<{ id: string; title: string }> } = {},
+): SetBuildExplanation {
   const allSongs = sets.flat();
   const setReasons = sets.map((set, index) => explainSet(set, index + 1));
   const ageCounts = new Map<string, number>();
@@ -353,6 +357,7 @@ export function explainBuiltSets(sets: SongForSet[][]): SetBuildExplanation {
       .sort((a, b) => b.count - a.count || a.age.localeCompare(b.age)),
     averageEngagementScore,
     averageEnergyScore,
+    excludedHolidaySongs: (options.excludedHolidaySongs ?? []).map((song) => ({ songId: song.id, title: song.title })),
   };
 }
 

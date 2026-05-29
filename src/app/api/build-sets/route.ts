@@ -3,6 +3,7 @@ import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "
 import { querySongsByIds } from "@/lib/db";
 import { buildSets, explainBuiltSets, type SongForSet } from "@/lib/set-builder";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
+import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 const strategy = z.enum(["balanced", "high-energy", "dance-heavy", "singalong-heavy", "acoustic-chill", "build-slowly"]);
 
@@ -17,6 +18,8 @@ const body = z.object({
   avoidBigBpmDrops: z.boolean().optional(),
   avoidHardVocals: z.boolean().optional(),
   saveStrongestForLater: z.boolean().optional(),
+  performedAt: z.string().optional(),
+  allowHolidaySongIds: z.array(z.string()).optional(),
 });
 
 export const dynamic = "force-dynamic";
@@ -63,6 +66,13 @@ export async function POST(req: Request) {
     capoOrTuning: r.capoOrTuning,
     avoidAfter: r.avoidAfter,
   }));
+  const allowedHolidayIds = new Set(parsed.data.allowHolidaySongIds ?? []);
+  const excludedHolidaySongs = holidaySongsOutsideSeason(forSets, parsed.data.performedAt).filter((song) => !allowedHolidayIds.has(song.id));
+  const excludedHolidayIds = new Set(excludedHolidaySongs.map((song) => song.id));
+  const buildableSongs = forSets.filter((song) => !excludedHolidayIds.has(song.id));
+  if (buildableSongs.length === 0) {
+    return privateJson({ error: "No songs are available after applying holiday season filters." }, { status: 400 });
+  }
 
   const buildOptions = {
     strategy: parsed.data.strategy,
@@ -73,17 +83,17 @@ export async function POST(req: Request) {
     saveStrongestForLater: parsed.data.saveStrongestForLater,
   };
 
-  let sets = buildSets(forSets, parsed.data.numSets, buildOptions);
+  let sets = buildSets(buildableSongs, parsed.data.numSets, buildOptions);
 
   if (parsed.data.venueId) {
     const counts = await getVenueSongPlayCounts(parsed.data.venueId, parsed.data.bandId);
-    const scored = forSets
+    const scored = buildableSongs
       .map((s) => ({ song: s, score: scoreSongForRecommendation(s.id, counts), plays: counts.get(s.id) ?? 0 }))
       .sort((a, b) => a.score - b.score || a.plays - b.plays);
 
     const preferredOrder = scored.map((x) => x.song);
     const preferredIds = new Set(preferredOrder.map((s) => s.id));
-    const rest = forSets.filter((s) => !preferredIds.has(s.id));
+    const rest = buildableSongs.filter((s) => !preferredIds.has(s.id));
     sets = buildSets([...preferredOrder, ...rest], parsed.data.numSets, buildOptions);
   }
 
@@ -99,9 +109,10 @@ export async function POST(req: Request) {
         musicalKey: s.musicalKey,
         durationSec: s.durationSec,
         energy: s.energy,
+        genre: s.genre,
       })),
     })),
-    explainability: explainBuiltSets(sets),
+    explainability: explainBuiltSets(sets, { excludedHolidaySongs }),
   });
   } catch (error) {
     return authErrorResponse(error);

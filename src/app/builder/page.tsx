@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
+import { isHolidayActiveDate, isHolidayGenre } from "@/lib/seasonality";
 
-type Song = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null };
+type Song = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre: string | null };
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string };
-type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; importIndex?: number };
+type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
 type Built = { index: number; songs: BuiltSong[] };
 type SetAnalysisReason = { setIndex: number; songId: string; title: string; reasons: string[] };
 type SetAnalysisScore = { songId: string; title: string; score: number };
@@ -21,6 +22,7 @@ type SetAnalysis = {
   audienceAgeDistribution: Array<{ age: string; count: number }>;
   averageEngagementScore: number;
   averageEnergyScore: number;
+  excludedHolidaySongs: Array<{ songId: string; title: string }>;
 };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
@@ -291,6 +293,14 @@ function SetAnalysisPanel({ analysis }: { analysis: SetAnalysis }) {
     <details className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-sm">
       <summary className="cursor-pointer font-medium text-[var(--accent)]">Set Analysis</summary>
       <div className="mt-3 space-y-4">
+        {analysis.excludedHolidaySongs.length > 0 && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Excluded {analysis.excludedHolidaySongs.length} Holiday song{analysis.excludedHolidaySongs.length === 1 ? "" : "s"} outside the holiday season.
+            <span className="ml-1 text-[var(--muted)]">
+              {analysis.excludedHolidaySongs.map((song) => song.title).join(", ")}
+            </span>
+          </div>
+        )}
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="rounded-md border border-[var(--border)] px-3 py-2">
             <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Average engagement</div>
@@ -389,6 +399,7 @@ export default function BuilderPage() {
   const [bands, setBands] = useState<Band[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [holidayOverrideIds, setHolidayOverrideIds] = useState<Set<string>>(new Set());
   const [bandId, setBandId] = useState("");
   const [venueId, setVenueId] = useState("");
   const [performedAt, setPerformedAt] = useState(todayForDateInput);
@@ -416,6 +427,10 @@ export default function BuilderPage() {
   const selectedBand = useMemo(() => bands.find((band) => band.id === bandId) ?? null, [bandId, bands]);
   const selectedVenue = useMemo(() => venues.find((venue) => venue.id === venueId) ?? null, [venueId, venues]);
   const generatedTitle = selectedBand && selectedVenue && performedAt ? `${selectedBand.name} - ${selectedVenue.name} - ${formatTitleDate(performedAt)}` : "";
+  const holidayOverridesOutsideSeason = useMemo(() => {
+    if (isHolidayActiveDate(performedAt)) return [];
+    return songs.filter((song) => holidayOverrideIds.has(song.id) && selected.has(song.id) && isHolidayGenre(song.genre));
+  }, [holidayOverrideIds, performedAt, selected, songs]);
 
   const load = useCallback(async () => {
     try {
@@ -438,12 +453,29 @@ export default function BuilderPage() {
   useEffect(() => { void load(); }, [load]);
 
   function toggle(id: string) {
+    const song = songs.find((row) => row.id === id);
     setSelected((prev) => {
       const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
+      if (n.has(id)) {
+        n.delete(id);
+        setHolidayOverrideIds((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        n.add(id);
+        if (song && isHolidayGenre(song.genre)) {
+          setHolidayOverrideIds((current) => new Set([...current, id]));
+        }
+      }
       return n;
     });
+  }
+
+  function selectAllSongs() {
+    setSelected(new Set(songs.map((s) => s.id)));
+    setHolidayOverrideIds(new Set());
   }
 
   function changeNumSets(value: number) {
@@ -495,6 +527,7 @@ export default function BuilderPage() {
 
     const fittedSets = fitImportedSetsToCount(importedSets, setCount);
     setSelected(new Set(matchedIds));
+    setHolidayOverrideIds(new Set());
     setSets(matchedIds.length > 0 ? fittedSets : null);
     setImportSummary({ total: imported.length, matched: matchedIds.length, unmatched, detected: detectedWithSets });
     setMsg(`Imported ${matchedIds.length} of ${imported.length} songs from ${file.name} in file order using ${setCount} set${setCount === 1 ? "" : "s"}. Review the detected setup, then save or adjust it.`);
@@ -525,6 +558,7 @@ export default function BuilderPage() {
       return [...withoutExisting, created].sort((a, b) => a.title.localeCompare(b.title));
     });
     setSelected((current) => new Set([...current, created.id]));
+    if (isHolidayGenre(created.genre)) setHolidayOverrideIds((current) => new Set([...current, created.id]));
     setImportSummary((current) => current ? {
       ...current,
       matched: current.matched + 1,
@@ -555,6 +589,8 @@ export default function BuilderPage() {
         numSets,
         venueId: venueId || undefined,
         bandId: bandId || undefined,
+        performedAt,
+        allowHolidaySongIds: Array.from(holidayOverrideIds).filter((id) => selected.has(id)),
         strategy,
         avoidSameArtist,
         avoidSameGenre,
@@ -674,12 +710,18 @@ export default function BuilderPage() {
       </div>
 
       {msg && <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">{msg}</div>}
+      {holidayOverridesOutsideSeason.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+          This set includes Holiday songs outside the holiday season.
+          <span className="ml-1 text-[var(--muted)]">{holidayOverridesOutsideSeason.map((song) => song.title).join(", ")}</span>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="card max-h-[520px] overflow-y-auto">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="font-medium">Pool ({selected.size} selected)</h2>
-            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setSelected(new Set(songs.map((s) => s.id)))}>All</button>
+            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={selectAllSongs}>All</button>
           </div>
           <ul className="space-y-1 text-sm">
             {songs.map((s) => (
@@ -831,7 +873,11 @@ export default function BuilderPage() {
         <Recommendations
           venueId={venueId}
           bandId={bandId}
-          onPickMany={(ids) => setSelected(new Set(ids))}
+          performanceDate={performedAt}
+          onPickMany={(ids) => {
+            setSelected(new Set(ids));
+            setHolidayOverrideIds(new Set());
+          }}
           onRows={updateReplacementPool}
         />
       )}
@@ -839,7 +885,7 @@ export default function BuilderPage() {
   );
 }
 
-function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: string; bandId: string; onPickMany: (ids: string[]) => void; onRows: (rows: BuiltSong[]) => void }) {
+function Recommendations({ venueId, bandId, performanceDate, onPickMany, onRows }: { venueId: string; bandId: string; performanceDate: string; onPickMany: (ids: string[]) => void; onRows: (rows: BuiltSong[]) => void }) {
   type RecommendationRow = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; recentPlaysAtVenue: number };
   type ReplacementPrompt = { songId: string; mode: "choices" | "list" };
 
@@ -859,7 +905,7 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
     let cancelled = false;
     void (async () => {
       const seed = Date.now();
-      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&seed=${seed}`, { cache: "no-store" });
+      const r = await fetch(`/api/recommendations?venueId=${encodeURIComponent(venueId)}&bandId=${encodeURIComponent(bandId)}&performanceDate=${encodeURIComponent(performanceDate)}&seed=${seed}`, { cache: "no-store" });
       const data = await readObjectResponse<{ ranked?: unknown }>(r, router, "Recommendations").catch((error) => {
         if (!cancelled) setMsg(error instanceof Error ? error.message : "Failed to load recommendations.");
         return null;
@@ -872,7 +918,7 @@ function Recommendations({ venueId, bandId, onPickMany, onRows }: { venueId: str
       }
     })();
     return () => { cancelled = true; };
-  }, [bandId, publishRows, router, venueId]);
+  }, [bandId, performanceDate, publishRows, router, venueId]);
 
   if (rows.length === 0 && !msg) return null;
 

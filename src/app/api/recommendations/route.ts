@@ -1,6 +1,7 @@
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
 import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
+import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +16,13 @@ export async function GET(req: Request) {
     if (!bandId && user.role !== "admin") return privateJson({ error: "bandId required" }, { status: 400 });
 
   const allSongs = (await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)")).rows.map(mapSong);
+  const performanceDate = url.searchParams.get("performanceDate");
+  const excludedHolidayIds = new Set(holidaySongsOutsideSeason(allSongs, performanceDate).map((song) => song.id));
   const seed = Number(url.searchParams.get("seed") ?? Date.now());
   const counts = await getVenueSongPlayCounts(venueId, bandId);
 
   const ranked = allSongs
+    .filter((song) => !excludedHolidayIds.has(song.id))
     .map((s) => ({ song: s, plays: counts.get(s.id) ?? 0, score: scoreSongForRecommendation(s.id, counts), tie: seededSongTie(s.id, seed) }))
     .sort((a, b) => b.score - a.score || a.plays - b.plays || a.tie - b.tie);
 
