@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authErrorResponse, requireAdmin } from "@/lib/auth";
 import { transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
+import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value)).optional().nullable();
 const song = z.object({
@@ -20,9 +21,13 @@ const song = z.object({
   crowdScore: rating,
   danceability: rating,
   vocalDifficulty: rating,
+  singalongScore: rating,
+  peakHourScore: rating,
+  transitionFlexibility: rating,
+  audienceAgeAppeal: audienceAgeAppealArraySchema.optional().nullable(),
+  femaleParticipationScore: rating,
   openerCandidate: z.boolean().optional().nullable(),
   closerCandidate: z.boolean().optional().nullable(),
-  leadSinger: z.string().optional().nullable(),
   capoOrTuning: z.string().optional().nullable(),
   avoidAfter: z.string().optional().nullable(),
 });
@@ -73,23 +78,36 @@ export async function POST(req: Request) {
         INSERT INTO songs (
           id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
           crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
-          lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW())
+          singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score,
+          singalong_score_source, peak_hour_score_source, transition_flexibility_source, audience_age_appeal_source, female_participation_score_source,
+          capo_or_tuning, avoid_after, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,NOW(),NOW())
         ON CONFLICT (id) DO UPDATE SET
           title = EXCLUDED.title, artist = EXCLUDED.artist, bpm = EXCLUDED.bpm,
           musical_key = EXCLUDED.musical_key, duration_sec = EXCLUDED.duration_sec,
           energy = EXCLUDED.energy, notes = EXCLUDED.notes, genre = EXCLUDED.genre,
           vibe = EXCLUDED.vibe, crowd_score = EXCLUDED.crowd_score,
           danceability = EXCLUDED.danceability, vocal_difficulty = EXCLUDED.vocal_difficulty,
+          singalong_score = EXCLUDED.singalong_score, peak_hour_score = EXCLUDED.peak_hour_score,
+          transition_flexibility = EXCLUDED.transition_flexibility, audience_age_appeal = EXCLUDED.audience_age_appeal,
+          female_participation_score = EXCLUDED.female_participation_score,
+          singalong_score_source = EXCLUDED.singalong_score_source, peak_hour_score_source = EXCLUDED.peak_hour_score_source,
+          transition_flexibility_source = EXCLUDED.transition_flexibility_source, audience_age_appeal_source = EXCLUDED.audience_age_appeal_source,
+          female_participation_score_source = EXCLUDED.female_participation_score_source,
           opener_candidate = EXCLUDED.opener_candidate, closer_candidate = EXCLUDED.closer_candidate,
-          lead_singer = EXCLUDED.lead_singer, capo_or_tuning = EXCLUDED.capo_or_tuning,
+          capo_or_tuning = EXCLUDED.capo_or_tuning,
           avoid_after = EXCLUDED.avoid_after, updated_at = NOW()
         `,
         [
           row.id ?? newId(), row.title, row.artist, row.bpm ?? null, row.musicalKey ?? row.key ?? null,
           row.durationSec ?? null, row.energy ?? null, row.notes ?? null, row.genre ?? null, row.vibe ?? null,
           row.crowdScore ?? null, row.danceability ?? null, row.vocalDifficulty ?? null,
-          row.openerCandidate ?? null, row.closerCandidate ?? null, row.leadSinger ?? null,
+          row.openerCandidate ?? null, row.closerCandidate ?? null,
+          row.singalongScore ?? null, row.peakHourScore ?? null, row.transitionFlexibility ?? null,
+          row.audienceAgeAppeal ?? null, row.femaleParticipationScore ?? null,
+          row.singalongScore == null ? null : "manual", row.peakHourScore == null ? null : "manual",
+          row.transitionFlexibility == null ? null : "manual", row.audienceAgeAppeal?.length ? "manual" : null,
+          row.femaleParticipationScore == null ? null : "manual",
           row.capoOrTuning ?? null, row.avoidAfter ?? null,
         ],
       );

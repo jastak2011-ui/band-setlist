@@ -22,9 +22,12 @@ export type SongForSet = {
   crowdScore?: number | null;
   danceability?: number | null;
   vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  femaleParticipationScore?: number | null;
   openerCandidate?: boolean | null;
   closerCandidate?: boolean | null;
-  leadSinger?: string | null;
   capoOrTuning?: string | null;
   avoidAfter?: string | null;
 };
@@ -64,11 +67,15 @@ function sameText(a: string | null | undefined, b: string | null | undefined) {
 function songStrength(song: SongForSet, options: Required<SmartBuildOptions>) {
   const crowd = scoreValue(song.crowdScore);
   const dance = scoreValue(song.danceability);
+  const singalong = scoreValue(song.singalongScore, crowd);
+  const female = scoreValue(song.femaleParticipationScore, dance);
+  const peak = scoreValue(song.peakHourScore, Math.max(crowd, dance));
+  const flex = scoreValue(song.transitionFlexibility);
   const energy = effectiveEnergy(song);
-  if (options.strategy === "dance-heavy") return dance * 0.5 + crowd * 0.25 + energy * 0.25;
-  if (options.strategy === "singalong-heavy") return crowd * 0.55 + dance * 0.2 + energy * 0.25;
-  if (options.strategy === "acoustic-chill") return crowd * 0.45 + (1 - energy) * 0.35 + dance * 0.2;
-  return crowd * 0.35 + dance * 0.3 + energy * 0.35;
+  if (options.strategy === "dance-heavy") return dance * 0.32 + female * 0.22 + peak * 0.18 + crowd * 0.14 + energy * 0.14;
+  if (options.strategy === "singalong-heavy") return singalong * 0.38 + crowd * 0.26 + female * 0.14 + peak * 0.12 + energy * 0.1;
+  if (options.strategy === "acoustic-chill") return crowd * 0.28 + flex * 0.26 + (1 - energy) * 0.22 + singalong * 0.14 + dance * 0.1;
+  return crowd * 0.2 + energy * 0.16 + dance * 0.16 + singalong * 0.15 + female * 0.13 + peak * 0.12 + flex * 0.08;
 }
 
 function targetEnergy(slotIndex: number, setLength: number, options: Required<SmartBuildOptions>) {
@@ -133,6 +140,10 @@ function chooseSongForSlot(
     const energy = effectiveEnergy(candidate);
     const crowd = scoreValue(candidate.crowdScore);
     const dance = scoreValue(candidate.danceability);
+    const singalong = scoreValue(candidate.singalongScore, crowd);
+    const peak = scoreValue(candidate.peakHourScore, Math.max(crowd, dance));
+    const flex = scoreValue(candidate.transitionFlexibility);
+    const female = scoreValue(candidate.femaleParticipationScore, dance);
     const vocal = scoreValue(candidate.vocalDifficulty, 0.35);
     const strength = songStrength(candidate, options);
 
@@ -140,15 +151,15 @@ function chooseSongForSlot(
     let score = 8 - Math.abs(energy - desiredEnergy) * 8;
 
     // Strategy weights nudge the same pool toward different practical live-show goals.
-    if (options.strategy === "dance-heavy") score += dance * 3 + crowd;
-    else if (options.strategy === "singalong-heavy") score += crowd * 3 + dance;
+    if (options.strategy === "dance-heavy") score += dance * 2.2 + female * 1.5 + peak + crowd * 0.6;
+    else if (options.strategy === "singalong-heavy") score += singalong * 2.6 + crowd * 1.4 + female * 0.8;
     else if (options.strategy === "acoustic-chill") score += (1 - energy) * 2 + crowd;
-    else if (options.strategy === "high-energy") score += energy * 2 + dance;
-    else score += crowd * 1.4 + dance * 1.1;
+    else if (options.strategy === "high-energy") score += energy * 1.8 + peak * 1.4 + dance + female * 0.7;
+    else score += crowd * 1.2 + energy + dance * 0.9 + singalong * 0.9 + female * 0.75 + peak * 0.75 + flex * 0.4;
 
     // Openers should feel known and awake; closers should feel strong, familiar, and high-impact.
-    if (firstSlot) score += (candidate.openerCandidate ? 5 : 0) + crowd * 2 + energy * 1.5;
-    if (finalSlot) score += (candidate.closerCandidate ? 6 : 0) + strength * 4;
+    if (firstSlot) score += (candidate.openerCandidate ? 5 : 0) + crowd * 1.6 + energy * 1.3 + flex;
+    if (finalSlot) score += (candidate.closerCandidate ? 6 : 0) + strength * 3 + singalong + peak;
 
     // Saving the strongest material for later avoids burning all the big songs too early.
     if (options.saveStrongestForLater) score += strength * progress * 2.5 - strength * (1 - progress) * 0.75;
@@ -161,8 +172,10 @@ function chooseSongForSlot(
       if (options.avoidSameArtist && sameText(candidate.artist, previous.artist)) score -= 7;
       if (options.avoidSameGenre && sameText(candidate.genre, previous.genre)) score -= 2.5;
       if (sameText(candidate.vibe, previous.vibe)) score -= 1.25;
+      score += flex * 0.9;
       if (options.avoidBigBpmDrops && !["acoustic-chill", "build-slowly"].includes(options.strategy) && bpmDrop > 18) score -= (bpmDrop - 18) / 4;
-      if (options.avoidHardVocals && vocal >= 0.72 && scoreValue(previous.vocalDifficulty, 0.35) >= 0.72) score -= 5;
+      if (options.avoidHardVocals && vocal >= 0.72 && scoreValue(previous.vocalDifficulty, 0.35) >= 0.72) score -= 6;
+      if (options.avoidHardVocals && vocal >= 0.85) score -= 2;
       if (avoidsPrevious(candidate, previous)) score -= 10;
     }
 
@@ -213,6 +226,5 @@ export function buildSets(songs: SongForSet[], numSets: number, options: SmartBu
   const sets = splitEvenlyForSets(songs, numSets, resolvedOptions);
   return sets.map((set) => reorderSetForSmartFlow(set, resolvedOptions));
 }
-
 
 

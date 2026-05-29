@@ -16,6 +16,11 @@ const body = z.object({
   crowdScore: z.number().nullable().optional(),
   danceability: z.number().nullable().optional(),
   vocalDifficulty: z.number().nullable().optional(),
+  singalongScore: z.number().nullable().optional(),
+  peakHourScore: z.number().nullable().optional(),
+  transitionFlexibility: z.number().nullable().optional(),
+  audienceAgeAppeal: z.array(z.string()).nullable().optional(),
+  femaleParticipationScore: z.number().nullable().optional(),
   openerCandidate: z.boolean().nullable().optional(),
   closerCandidate: z.boolean().nullable().optional(),
 });

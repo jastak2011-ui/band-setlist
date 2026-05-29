@@ -3,6 +3,7 @@ import "server-only";
 import { lookupBpmFromDeezer } from "./bpm-deezer";
 import { mapSong, query, type DbSong } from "@/lib/db";
 import { normalizeSongIdentity } from "./song-import";
+import { filterAudienceAgeAppeal } from "@/lib/audience-age";
 
 export type EnrichmentField =
   | "title"
@@ -15,14 +16,19 @@ export type EnrichmentField =
   | "danceability"
   | "energy"
   | "vocalDifficulty"
+  | "singalongScore"
+  | "peakHourScore"
+  | "transitionFlexibility"
+  | "audienceAgeAppeal"
+  | "femaleParticipationScore"
   | "openerCandidate"
   | "closerCandidate"
   | "musicalKey";
 
 export type EnrichmentProposal = {
   field: EnrichmentField;
-  current: string | number | boolean | null;
-  proposed: string | number | boolean | null;
+  current: string | number | boolean | string[] | null;
+  proposed: string | number | boolean | string[] | null;
   source: "local-library" | "deezer" | "musicbrainz" | "lastfm" | "lastfm-tags" | "none";
   status: "found" | "not-found";
   note?: string;
@@ -47,6 +53,11 @@ export type MetadataLookupResult = {
   bpm: number | null;
   energy: number | null;
   danceability: number | null;
+  singalongScore: number | null;
+  peakHourScore: number | null;
+  transitionFlexibility: number | null;
+  audienceAgeAppeal: string[] | null;
+  femaleParticipationScore: number | null;
 };
 
 export type EnrichmentSongInput = {
@@ -62,6 +73,11 @@ export type EnrichmentSongInput = {
   crowdScore?: number | null;
   danceability?: number | null;
   vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  audienceAgeAppeal?: string[] | null;
+  femaleParticipationScore?: number | null;
   openerCandidate?: boolean | null;
   closerCandidate?: boolean | null;
 };
@@ -95,6 +111,11 @@ const targetFields: EnrichmentField[] = [
   "danceability",
   "energy",
   "vocalDifficulty",
+  "singalongScore",
+  "peakHourScore",
+  "transitionFlexibility",
+  "audienceAgeAppeal",
+  "femaleParticipationScore",
   "openerCandidate",
   "closerCandidate",
   "musicalKey",
@@ -156,7 +177,7 @@ function currentValue(song: EnrichmentSongInput, field: EnrichmentField) {
 function proposal(
   song: EnrichmentSongInput,
   field: EnrichmentField,
-  proposed: string | number | boolean | null | undefined,
+  proposed: string | number | boolean | string[] | null | undefined,
   source: EnrichmentProposal["source"],
   note?: string,
 ): EnrichmentProposal | null {
@@ -194,7 +215,12 @@ function inferFromTags(tags: string[]) {
     crowdScore: number | null;
     danceability: number | null;
     energy: number | null;
-    vocalDifficulty: number | null;
+  vocalDifficulty: number | null;
+    singalongScore: number | null;
+    peakHourScore: number | null;
+    transitionFlexibility: number | null;
+    audienceAgeAppeal: string[] | null;
+    femaleParticipationScore: number | null;
     openerCandidate: boolean | null;
     closerCandidate: boolean | null;
   } = {
@@ -204,6 +230,11 @@ function inferFromTags(tags: string[]) {
     danceability: null,
     energy: null,
     vocalDifficulty: null,
+    singalongScore: null,
+    peakHourScore: null,
+    transitionFlexibility: null,
+    audienceAgeAppeal: null,
+    femaleParticipationScore: null,
     openerCandidate: null,
     closerCandidate: null,
   };
@@ -212,17 +243,24 @@ function inferFromTags(tags: string[]) {
     inferred.danceability = 0.8;
     inferred.energy = 0.75;
     inferred.crowdScore = 0.8;
+    inferred.peakHourScore = 0.8;
+    inferred.femaleParticipationScore = 0.8;
     inferred.openerCandidate = true;
     inferred.closerCandidate = true;
   }
   if (includes(["rock", "indie rock", "alternative", "energetic"])) {
     inferred.energy = Math.max(inferred.energy ?? 0, 0.7);
+    inferred.peakHourScore = Math.max(inferred.peakHourScore ?? 0, 0.7);
     inferred.openerCandidate = true;
   }
-  if (includes(["anthem", "singalong", "sing-along", "classic rock"])) {
+  if (includes(["anthem", "singalong", "sing-along", "classic rock", "karaoke", "crowd favorite", "pop anthem"])) {
     inferred.crowdScore = Math.max(inferred.crowdScore ?? 0, 0.85);
+    inferred.singalongScore = Math.max(inferred.singalongScore ?? 0, 0.85);
     inferred.closerCandidate = true;
   }
+  if (includes(["party", "festival favorite", "high energy"])) inferred.peakHourScore = Math.max(inferred.peakHourScore ?? 0, 0.82);
+  if (includes(["midtempo", "acoustic", "crossover", "mainstream", "versatile"])) inferred.transitionFlexibility = Math.max(inferred.transitionFlexibility ?? 0, 0.78);
+  if (includes(["female vocalists", "female vocalist", "country pop"])) inferred.femaleParticipationScore = Math.max(inferred.femaleParticipationScore ?? 0, 0.78);
   if (includes(["ballad", "sad", "slow", "mellow", "chill"])) {
     inferred.energy = Math.min(inferred.energy ?? 0.4, 0.4);
     inferred.danceability = Math.min(inferred.danceability ?? 0.35, 0.35);
@@ -230,7 +268,15 @@ function inferFromTags(tags: string[]) {
   if (includes(["acoustic", "folk", "singer-songwriter"])) {
     inferred.energy = inferred.energy ?? 0.45;
     inferred.vocalDifficulty = inferred.vocalDifficulty ?? 0.5;
+    inferred.transitionFlexibility = inferred.transitionFlexibility ?? 0.65;
   }
+  const ages = new Set<string>();
+  if (includes(["60s", "70s", "classic rock", "oldies"])) ages.add("Boomer");
+  if (includes(["80s", "90s", "alternative", "grunge"])) ages.add("Gen X");
+  if (includes(["90s", "2000s", "indie rock", "pop punk"])) ages.add("Millennial");
+  if (includes(["2010s", "2020s", "tiktok", "modern pop"])) ages.add("Gen Z");
+  if (includes(["mainstream", "pop", "party", "wedding", "crowd favorite"])) ages.add("All Ages");
+  inferred.audienceAgeAppeal = filterAudienceAgeAppeal([...ages]);
 
   return inferred;
 }
@@ -360,6 +406,11 @@ export async function lookupSongMetadata(input: EnrichmentSongInput | string, ma
         proposal(song, "danceability", inferred.danceability, "lastfm-tags", "Conservative tag inference."),
         proposal(song, "energy", inferred.energy, "lastfm-tags", "Conservative tag inference."),
         proposal(song, "vocalDifficulty", inferred.vocalDifficulty, "lastfm-tags", "Conservative tag inference."),
+        proposal(song, "singalongScore", inferred.singalongScore, "lastfm-tags", "Inferred from singalong, anthem, karaoke, and popularity tags."),
+        proposal(song, "peakHourScore", inferred.peakHourScore, "lastfm-tags", "Inferred from party, dance, high-energy, and crowd-favorite tags."),
+        proposal(song, "transitionFlexibility", inferred.transitionFlexibility, "lastfm-tags", "Inferred from midtempo, acoustic, crossover, mainstream, or versatile tags."),
+        proposal(song, "audienceAgeAppeal", inferred.audienceAgeAppeal, "lastfm-tags", "Inferred from decade, genre, and mainstream tags."),
+        proposal(song, "femaleParticipationScore", inferred.femaleParticipationScore, "lastfm-tags", "Inferred from dance, pop, country pop, party, anthem, and singalong tags."),
         proposal(song, "openerCandidate", inferred.openerCandidate, "lastfm-tags", "Conservative tag inference."),
         proposal(song, "closerCandidate", inferred.closerCandidate, "lastfm-tags", "Conservative tag inference."),
       ].filter((item): item is EnrichmentProposal => Boolean(item)),
@@ -404,12 +455,17 @@ export async function lookupSongMetadata(input: EnrichmentSongInput | string, ma
     bpm: typeof byField.get("bpm") === "number" ? byField.get("bpm") as number : null,
     energy: typeof byField.get("energy") === "number" ? byField.get("energy") as number : null,
     danceability: typeof byField.get("danceability") === "number" ? byField.get("danceability") as number : null,
+    singalongScore: typeof byField.get("singalongScore") === "number" ? byField.get("singalongScore") as number : null,
+    peakHourScore: typeof byField.get("peakHourScore") === "number" ? byField.get("peakHourScore") as number : null,
+    transitionFlexibility: typeof byField.get("transitionFlexibility") === "number" ? byField.get("transitionFlexibility") as number : null,
+    audienceAgeAppeal: Array.isArray(byField.get("audienceAgeAppeal")) ? byField.get("audienceAgeAppeal") as string[] : null,
+    femaleParticipationScore: typeof byField.get("femaleParticipationScore") === "number" ? byField.get("femaleParticipationScore") as number : null,
   };
 }
 
 function notFoundNote(field: EnrichmentField, hasLastFmKey: boolean) {
   if (field === "bpm") return "BPM was attempted through Deezer but was not available.";
-  if (["genre", "vibe", "crowdScore", "danceability", "energy"].includes(field)) {
+  if (["genre", "vibe", "crowdScore", "danceability", "energy", "singalongScore", "peakHourScore", "transitionFlexibility", "audienceAgeAppeal", "femaleParticipationScore"].includes(field)) {
     return hasLastFmKey ? "No usable Last.fm tags/listeners found." : "Last.fm enrichment requires server env var LASTFM_API_KEY.";
   }
   if (field === "musicalKey") return "No reliable key source is configured for this pipeline.";

@@ -14,9 +14,13 @@ export type SongImportInput = {
   crowdScore?: number | null;
   danceability?: number | null;
   vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  audienceAgeAppeal?: string[] | null;
+  femaleParticipationScore?: number | null;
   openerCandidate?: boolean | null;
   closerCandidate?: boolean | null;
-  leadSinger?: string | null;
   capoOrTuning?: string | null;
   avoidAfter?: string | null;
 };
@@ -37,9 +41,13 @@ const importFields = [
   ["crowdScore", "crowd_score"],
   ["danceability", "danceability"],
   ["vocalDifficulty", "vocal_difficulty"],
+  ["singalongScore", "singalong_score"],
+  ["peakHourScore", "peak_hour_score"],
+  ["transitionFlexibility", "transition_flexibility"],
+  ["audienceAgeAppeal", "audience_age_appeal"],
+  ["femaleParticipationScore", "female_participation_score"],
   ["openerCandidate", "opener_candidate"],
   ["closerCandidate", "closer_candidate"],
-  ["leadSinger", "lead_singer"],
   ["capoOrTuning", "capo_or_tuning"],
   ["avoidAfter", "avoid_after"],
 ] as const;
@@ -104,10 +112,13 @@ export async function findOrCreateSong(input: SongImportInput): Promise<SongImpo
       INSERT INTO songs (
         id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
         crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
-        lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
+        singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score,
+        singalong_score_source, peak_hour_score_source, transition_flexibility_source, audience_age_appeal_source, female_participation_score_source,
+        capo_or_tuning, avoid_after, created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21, $22, $23, $24, $25, $26, $27, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -127,7 +138,16 @@ export async function findOrCreateSong(input: SongImportInput): Promise<SongImpo
         input.vocalDifficulty ?? null,
         input.openerCandidate ?? null,
         input.closerCandidate ?? null,
-        input.leadSinger ?? null,
+        input.singalongScore ?? null,
+        input.peakHourScore ?? null,
+        input.transitionFlexibility ?? null,
+        input.audienceAgeAppeal ?? null,
+        input.femaleParticipationScore ?? null,
+        input.singalongScore == null ? null : "manual",
+        input.peakHourScore == null ? null : "manual",
+        input.transitionFlexibility == null ? null : "manual",
+        input.audienceAgeAppeal?.length ? "manual" : null,
+        input.femaleParticipationScore == null ? null : "manual",
         input.capoOrTuning ?? null,
         input.avoidAfter ?? null,
       ],

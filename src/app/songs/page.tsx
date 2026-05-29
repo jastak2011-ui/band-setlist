@@ -18,9 +18,18 @@ type Song = {
   crowdScore: number | null;
   danceability: number | null;
   vocalDifficulty: number | null;
+  singalongScore: number | null;
+  peakHourScore: number | null;
+  transitionFlexibility: number | null;
+  audienceAgeAppeal: string[] | null;
+  femaleParticipationScore: number | null;
+  singalongScoreSource: string | null;
+  peakHourScoreSource: string | null;
+  transitionFlexibilitySource: string | null;
+  audienceAgeAppealSource: string | null;
+  femaleParticipationScoreSource: string | null;
   openerCandidate: boolean | null;
   closerCandidate: boolean | null;
-  leadSinger: string | null;
   capoOrTuning: string | null;
   avoidAfter: string | null;
 };
@@ -38,9 +47,13 @@ type SongForm = {
   crowdScore: string;
   danceability: string;
   vocalDifficulty: string;
+  singalongScore: string;
+  peakHourScore: string;
+  transitionFlexibility: string;
+  audienceAgeAppeal: string[];
+  femaleParticipationScore: string;
   openerCandidate: boolean;
   closerCandidate: boolean;
-  leadSinger: string;
   capoOrTuning: string;
   avoidAfter: string;
 };
@@ -62,6 +75,11 @@ type MetadataLookupResult = {
   energy: number | null;
   danceability: number | null;
   crowdScore: number | null;
+  singalongScore: number | null;
+  peakHourScore: number | null;
+  transitionFlexibility: number | null;
+  audienceAgeAppeal: string[] | null;
+  femaleParticipationScore: number | null;
   genre: string | null;
   vibe: string | null;
   message?: string;
@@ -78,14 +96,19 @@ type EnrichmentField =
   | "danceability"
   | "energy"
   | "vocalDifficulty"
+  | "singalongScore"
+  | "peakHourScore"
+  | "transitionFlexibility"
+  | "audienceAgeAppeal"
+  | "femaleParticipationScore"
   | "openerCandidate"
   | "closerCandidate"
   | "musicalKey";
 
 type EnrichmentProposal = {
   field: EnrichmentField;
-  current: string | number | boolean | null;
-  proposed: string | number | boolean | null;
+  current: string | number | boolean | string[] | null;
+  proposed: string | number | boolean | string[] | null;
   source: "local-library" | "deezer" | "musicbrainz" | "lastfm" | "lastfm-tags" | "none";
   status: "found" | "not-found";
   note?: string;
@@ -117,17 +140,23 @@ const emptyForm: SongForm = {
   crowdScore: "",
   danceability: "",
   vocalDifficulty: "",
+  singalongScore: "",
+  peakHourScore: "",
+  transitionFlexibility: "",
+  audienceAgeAppeal: [],
+  femaleParticipationScore: "",
   openerCandidate: false,
   closerCandidate: false,
-  leadSinger: "",
   capoOrTuning: "",
   avoidAfter: "",
 };
 
 const csvImportTemplate = [
-  "title,artist,key,capo,bpm,duration,genre,notes,vibe,crowd_score,danceability,vocal_difficulty,opener_candidate,closer_candidate,lead_singer,capo_or_tuning,avoid_after",
-  "Example Song,Example Artist,G,,120,3:45,Rock,Notes,Upbeat,8,7,4,true,false,Lead Singer,,",
+  "title,artist,key,capo,bpm,duration,genre,notes,vibe,crowd_score,danceability,vocal_difficulty,singalong_score,peak_hour_score,transition_flexibility,audience_age_appeal,female_participation_score,opener_candidate,closer_candidate,capo_or_tuning,avoid_after",
+  "Example Song,Example Artist,G,,120,3:45,Rock,Notes,Upbeat,8,7,4,8,8,6,Gen X;Millennial;All Ages,8,true,false,,",
 ].join("\n");
+
+const audienceAgeOptions = ["Boomer", "Gen X", "Millennial", "Gen Z", "All Ages"] as const;
 
 const htmlImportTemplate = `<!doctype html>
 <html>
@@ -168,6 +197,11 @@ const bulkEnrichmentFields: EnrichmentField[] = [
   "danceability",
   "energy",
   "vocalDifficulty",
+  "singalongScore",
+  "peakHourScore",
+  "transitionFlexibility",
+  "audienceAgeAppeal",
+  "femaleParticipationScore",
   "openerCandidate",
   "closerCandidate",
 ];
@@ -237,6 +271,7 @@ function hasValue(value: unknown) {
 
 function formatPreviewValue(value: unknown) {
   if (!hasValue(value)) return "-";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
   if (typeof value === "boolean") return value ? "yes" : "no";
   if (typeof value === "number") return Number.isInteger(value) ? String(value) : String(Math.round(value * 10));
   return String(value);
@@ -254,6 +289,11 @@ function enrichmentFieldLabel(field: EnrichmentField) {
     danceability: "Danceability",
     energy: "Energy",
     vocalDifficulty: "Vocal difficulty",
+    singalongScore: "Singalong",
+    peakHourScore: "Peak hour",
+    transitionFlexibility: "Transition flexibility",
+    audienceAgeAppeal: "Audience age appeal",
+    femaleParticipationScore: "Female participation",
     openerCandidate: "Opener",
     closerCandidate: "Closer",
     musicalKey: "Key",
@@ -319,9 +359,13 @@ function editFormFromSong(song: Song): EditForm {
     crowdScore: formatRating(song.crowdScore),
     danceability: formatRating(song.danceability),
     vocalDifficulty: formatRating(song.vocalDifficulty),
+    singalongScore: formatRating(song.singalongScore),
+    peakHourScore: formatRating(song.peakHourScore),
+    transitionFlexibility: formatRating(song.transitionFlexibility),
+    audienceAgeAppeal: song.audienceAgeAppeal ?? [],
+    femaleParticipationScore: formatRating(song.femaleParticipationScore),
     openerCandidate: Boolean(song.openerCandidate),
     closerCandidate: Boolean(song.closerCandidate),
-    leadSinger: song.leadSinger ?? "",
     capoOrTuning: song.capoOrTuning ?? "",
     avoidAfter: song.avoidAfter ?? "",
   };
@@ -348,9 +392,18 @@ function metadataBody(form: SongForm) {
     crowdScore: parseRating(form.crowdScore),
     danceability: parseRating(form.danceability),
     vocalDifficulty: parseRating(form.vocalDifficulty),
+    singalongScore: parseRating(form.singalongScore),
+    peakHourScore: parseRating(form.peakHourScore),
+    transitionFlexibility: parseRating(form.transitionFlexibility),
+    audienceAgeAppeal: form.audienceAgeAppeal.length ? form.audienceAgeAppeal : null,
+    femaleParticipationScore: parseRating(form.femaleParticipationScore),
+    singalongScoreSource: form.singalongScore.trim() ? "manual" : null,
+    peakHourScoreSource: form.peakHourScore.trim() ? "manual" : null,
+    transitionFlexibilitySource: form.transitionFlexibility.trim() ? "manual" : null,
+    audienceAgeAppealSource: form.audienceAgeAppeal.length ? "manual" : null,
+    femaleParticipationScoreSource: form.femaleParticipationScore.trim() ? "manual" : null,
     openerCandidate: form.openerCandidate,
     closerCandidate: form.closerCandidate,
-    leadSinger: form.leadSinger.trim() || null,
     capoOrTuning: form.capoOrTuning.trim() || null,
     avoidAfter: form.avoidAfter.trim() || null,
   };
@@ -370,6 +423,11 @@ function lookupPayloadFromSong(song: Song) {
     crowdScore: song.crowdScore,
     danceability: song.danceability,
     vocalDifficulty: song.vocalDifficulty,
+    singalongScore: song.singalongScore,
+    peakHourScore: song.peakHourScore,
+    transitionFlexibility: song.transitionFlexibility,
+    audienceAgeAppeal: song.audienceAgeAppeal,
+    femaleParticipationScore: song.femaleParticipationScore,
     openerCandidate: song.openerCandidate,
     closerCandidate: song.closerCandidate,
   };
@@ -389,6 +447,11 @@ function lookupPayloadFromForm(song: Song, form: SongForm) {
     crowdScore: parseRating(form.crowdScore),
     danceability: parseRating(form.danceability),
     vocalDifficulty: parseRating(form.vocalDifficulty),
+    singalongScore: parseRating(form.singalongScore),
+    peakHourScore: parseRating(form.peakHourScore),
+    transitionFlexibility: parseRating(form.transitionFlexibility),
+    audienceAgeAppeal: form.audienceAgeAppeal.length ? form.audienceAgeAppeal : null,
+    femaleParticipationScore: parseRating(form.femaleParticipationScore),
     openerCandidate: form.openerCandidate,
     closerCandidate: form.closerCandidate,
   };
@@ -400,11 +463,14 @@ function smartSummary(song: Song) {
     song.crowdScore != null ? `C${formatRating(song.crowdScore)}` : null,
     song.danceability != null ? `D${formatRating(song.danceability)}` : null,
     song.vocalDifficulty != null ? `V${formatRating(song.vocalDifficulty)}` : null,
+    song.singalongScore != null ? `S${formatRating(song.singalongScore)}` : null,
+    song.peakHourScore != null ? `P${formatRating(song.peakHourScore)}` : null,
+    song.femaleParticipationScore != null ? `F${formatRating(song.femaleParticipationScore)}` : null,
   ].filter(Boolean);
   const contextParts = [
     song.genre ? `G:${song.genre}` : null,
     song.vibe ? `Vibe:${song.vibe}` : null,
-    song.leadSinger ? `Singer:${song.leadSinger}` : null,
+    song.audienceAgeAppeal?.length ? `Ages:${song.audienceAgeAppeal.slice(0, 2).join("/")}` : null,
     song.capoOrTuning ? `Tune:${song.capoOrTuning}` : null,
     song.openerCandidate ? "Opener" : null,
     song.closerCandidate ? "Closer" : null,
@@ -414,7 +480,7 @@ function smartSummary(song: Song) {
   const metadataCount = ratingParts.length + contextParts.length;
   if (metadataCount === 0) return "Missing";
 
-  const hasCoreRatings = song.energy != null && song.crowdScore != null && song.danceability != null && song.vocalDifficulty != null;
+  const hasCoreRatings = song.energy != null && song.crowdScore != null && song.danceability != null && song.vocalDifficulty != null && song.singalongScore != null && song.peakHourScore != null;
   const status = hasCoreRatings ? "Ready" : "Partial";
   return [status, ratingParts.join(" "), contextParts.slice(0, 2).join(" ")].filter(Boolean).join(" - ");
 }
@@ -442,12 +508,12 @@ function RatingPresets({
     ? [
         ["Easy", "3"],
         ["Medium", "6"],
-        ["Hard", "9"],
+        ["Hard", "8"],
       ]
     : [
         ["Low", "3"],
         ["Medium", "6"],
-        ["High", "9"],
+        ["High", "8"],
       ];
   const selected = Number(value);
 
@@ -471,7 +537,26 @@ function RatingPresets({
   );
 }
 
-function OptionalMetadata({ form, onChange, defaultOpen = false }: { form: SongForm; onChange: (patch: Partial<SongForm>) => void; defaultOpen?: boolean }) {
+function sourceLabel(value?: string | null) {
+  if (value === "inferred") return "Inferred";
+  if (value === "manual") return "Manual Override";
+  return null;
+}
+
+function FieldSource({ value }: { value?: string | null }) {
+  const label = sourceLabel(value);
+  if (!label) return null;
+  return <span className="ml-2 rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] uppercase text-[var(--muted)]">{label}</span>;
+}
+
+function OptionalMetadata({ form, onChange, defaultOpen = false, sourceSong }: { form: SongForm; onChange: (patch: Partial<SongForm>) => void; defaultOpen?: boolean; sourceSong?: Song }) {
+  const toggleAge = (age: string) => {
+    const selected = new Set(form.audienceAgeAppeal);
+    if (selected.has(age)) selected.delete(age);
+    else selected.add(age);
+    onChange({ audienceAgeAppeal: [...selected] });
+  };
+
   return (
     <details open={defaultOpen} className="rounded-lg border border-[var(--border)] bg-[#0f131a]/60 px-3 py-2">
       <summary className="cursor-pointer text-sm font-medium text-[var(--text)]">Optional smart builder metadata</summary>
@@ -495,6 +580,26 @@ function OptionalMetadata({ form, onChange, defaultOpen = false }: { form: SongF
               <input className="input" type="number" min="1" max="10" step="1" value={form.vocalDifficulty} onChange={(e) => onChange({ vocalDifficulty: e.target.value })} />
               <RatingPresets value={form.vocalDifficulty} hardLabels onPick={(value) => onChange({ vocalDifficulty: value })} />
             </MetadataField>
+            <MetadataField label="Singalong Score (1-10)" helper="How likely the audience is to sing along">
+              <input className="input" type="number" min="1" max="10" step="1" value={form.singalongScore} onChange={(e) => onChange({ singalongScore: e.target.value })} />
+              <RatingPresets value={form.singalongScore} onPick={(value) => onChange({ singalongScore: value })} />
+              <FieldSource value={sourceSong?.singalongScoreSource} />
+            </MetadataField>
+            <MetadataField label="Peak Hour Score (1-10)" helper="How effective this song is during the highest-energy portion of the night">
+              <input className="input" type="number" min="1" max="10" step="1" value={form.peakHourScore} onChange={(e) => onChange({ peakHourScore: e.target.value })} />
+              <RatingPresets value={form.peakHourScore} onPick={(value) => onChange({ peakHourScore: value })} />
+              <FieldSource value={sourceSong?.peakHourScoreSource} />
+            </MetadataField>
+            <MetadataField label="Transition Flexibility (1-10)" helper="How easily the song fits before or after a wide variety of songs">
+              <input className="input" type="number" min="1" max="10" step="1" value={form.transitionFlexibility} onChange={(e) => onChange({ transitionFlexibility: e.target.value })} />
+              <RatingPresets value={form.transitionFlexibility} onPick={(value) => onChange({ transitionFlexibility: value })} />
+              <FieldSource value={sourceSong?.transitionFlexibilitySource} />
+            </MetadataField>
+            <MetadataField label="Female Participation Score (1-10)" helper="How likely the song is to drive female audience engagement, singing, dancing, or participation">
+              <input className="input" type="number" min="1" max="10" step="1" value={form.femaleParticipationScore} onChange={(e) => onChange({ femaleParticipationScore: e.target.value })} />
+              <RatingPresets value={form.femaleParticipationScore} onPick={(value) => onChange({ femaleParticipationScore: value })} />
+              <FieldSource value={sourceSong?.femaleParticipationScoreSource} />
+            </MetadataField>
           </div>
         </section>
 
@@ -507,15 +612,27 @@ function OptionalMetadata({ form, onChange, defaultOpen = false }: { form: SongF
             <MetadataField label="Vibe / Mood">
               <input className="input" placeholder="Chill, rowdy, singalong..." value={form.vibe} onChange={(e) => onChange({ vibe: e.target.value })} />
             </MetadataField>
+            <MetadataField label="Audience Age Appeal" helper="Audience groups that typically respond well to the song">
+              <div className="flex flex-wrap gap-1.5">
+                {audienceAgeOptions.map((age) => (
+                  <button
+                    key={age}
+                    type="button"
+                    className={`btn px-2 py-1 text-[11px] ${form.audienceAgeAppeal.includes(age) ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => toggleAge(age)}
+                  >
+                    {age}
+                  </button>
+                ))}
+              </div>
+              <FieldSource value={sourceSong?.audienceAgeAppealSource} />
+            </MetadataField>
           </div>
         </section>
 
         <section className="space-y-2 border-t border-[var(--border)] pt-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--accent)]">Performance notes</h3>
           <div className="grid gap-3 sm:grid-cols-2">
-            <MetadataField label="Lead Singer">
-              <input className="input" placeholder="Singer name" value={form.leadSinger} onChange={(e) => onChange({ leadSinger: e.target.value })} />
-            </MetadataField>
             <MetadataField label="Capo or Alternate Tuning">
               <input className="input" placeholder="Capo 2, Eb tuning..." value={form.capoOrTuning} onChange={(e) => onChange({ capoOrTuning: e.target.value })} />
             </MetadataField>
@@ -605,6 +722,10 @@ export default function SongsPage() {
       ["Crowd score", current.crowdScore],
       ["Danceability", current.danceability],
       ["Vocal difficulty", current.vocalDifficulty],
+      ["Singalong score", current.singalongScore],
+      ["Peak hour score", current.peakHourScore],
+      ["Transition flexibility", current.transitionFlexibility],
+      ["Female participation score", current.femaleParticipationScore],
     ]) {
       if (Number.isNaN(parseRating(value))) return `${label} must be a whole number from 1 to 10.`;
     }
@@ -764,8 +885,10 @@ export default function SongsPage() {
         const currentValue = formValue(current, item.field);
         if (!overwrite && !canFillMissing(currentValue)) return patch;
         if (item.field === "durationSec" && typeof item.proposed === "number") patch.durationSec = formatDuration(item.proposed);
-        else if (["bpm", "energy", "crowdScore", "danceability", "vocalDifficulty"].includes(item.field) && typeof item.proposed === "number") {
-          patch[item.field as "bpm" | "energy" | "crowdScore" | "danceability" | "vocalDifficulty"] = item.field === "bpm" ? String(item.proposed) : formatRating(item.proposed);
+        else if (["bpm", "energy", "crowdScore", "danceability", "vocalDifficulty", "singalongScore", "peakHourScore", "transitionFlexibility", "femaleParticipationScore"].includes(item.field) && typeof item.proposed === "number") {
+          patch[item.field as "bpm" | "energy" | "crowdScore" | "danceability" | "vocalDifficulty" | "singalongScore" | "peakHourScore" | "transitionFlexibility" | "femaleParticipationScore"] = item.field === "bpm" ? String(item.proposed) : formatRating(item.proposed);
+        } else if (item.field === "audienceAgeAppeal" && Array.isArray(item.proposed)) {
+          patch.audienceAgeAppeal = item.proposed;
         } else if (item.field === "openerCandidate" || item.field === "closerCandidate") {
           patch[item.field] = Boolean(item.proposed);
         } else if (typeof item.proposed === "string") {
@@ -817,6 +940,11 @@ export default function SongsPage() {
       if (item.status !== "found" || !hasValue(item.proposed)) continue;
       if (!overwrite && !canFillMissing(songValue(song, item.field))) continue;
       body[item.field] = item.proposed;
+      if (item.field === "singalongScore") body.singalongScoreSource = "inferred";
+      if (item.field === "peakHourScore") body.peakHourScoreSource = "inferred";
+      if (item.field === "transitionFlexibility") body.transitionFlexibilitySource = "inferred";
+      if (item.field === "audienceAgeAppeal") body.audienceAgeAppealSource = "inferred";
+      if (item.field === "femaleParticipationScore") body.femaleParticipationScoreSource = "inferred";
     }
 
     if (Object.keys(body).length === 0) {
@@ -942,6 +1070,11 @@ export default function SongsPage() {
           if (item.status !== "found" || !hasValue(item.proposed)) continue;
           if (!canFillMissing(songValue(song, item.field))) continue;
           body[item.field] = item.proposed;
+          if (item.field === "singalongScore") body.singalongScoreSource = "inferred";
+          if (item.field === "peakHourScore") body.peakHourScoreSource = "inferred";
+          if (item.field === "transitionFlexibility") body.transitionFlexibilitySource = "inferred";
+          if (item.field === "audienceAgeAppeal") body.audienceAgeAppealSource = "inferred";
+          if (item.field === "femaleParticipationScore") body.femaleParticipationScoreSource = "inferred";
         }
 
         if (Object.keys(body).length === 0) {
@@ -1052,7 +1185,7 @@ export default function SongsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Songs</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          CSV columns: title, artist, bpm, key, duration_sec, energy, notes, genre, vibe, crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate, lead_singer, capo_or_tuning, avoid_after.
+          CSV columns: title, artist, bpm, key, duration_sec, energy, notes, genre, vibe, crowd_score, danceability, vocal_difficulty, singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score, opener_candidate, closer_candidate, capo_or_tuning, avoid_after.
         </p>
       </div>
 
@@ -1091,7 +1224,7 @@ export default function SongsPage() {
             <p className="font-medium text-[var(--fg)]">CSV or HTML import supported</p>
             <p className="mt-2">Required field: <span className="font-mono text-[var(--fg)]">title</span></p>
             <p className="mt-1">
-              Optional fields: artist, key, capo, bpm, duration, energy, genre, notes, vibe, crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate, lead_singer, capo_or_tuning, avoid_after.
+              Optional fields: artist, key, capo, bpm, duration, energy, genre, notes, vibe, crowd_score, danceability, vocal_difficulty, singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score, opener_candidate, closer_candidate, capo_or_tuning, avoid_after.
             </p>
             <p className="mt-2">Common aliases work too, including song, name, performer, musical_key, tempo, length, comments, style, and mood.</p>
             <p className="mt-2">HTML imports should use a table with headers like Title, Artist, Key, and Capo. SET marker rows such as SET 2 or Set 3 are ignored.</p>
@@ -1263,7 +1396,7 @@ export default function SongsPage() {
                             {smartBusyId === s.id ? "Enriching..." : "Enrich metadata"}
                           </button>
                         </div>
-                        <OptionalMetadata form={editForm} defaultOpen onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))} />
+                        <OptionalMetadata form={editForm} defaultOpen sourceSong={s} onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))} />
                       </div>
                     </td>
                   </tr>,

@@ -3,8 +3,10 @@ import { z } from "zod";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
 import { findOrCreateSong } from "@/lib/song-import";
+import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value));
+const source = z.enum(["manual", "inferred"]).nullable().optional();
 
 const songInput = z.object({
   title: z.string().min(1),
@@ -19,9 +21,18 @@ const songInput = z.object({
   crowdScore: rating.optional().nullable(),
   danceability: rating.optional().nullable(),
   vocalDifficulty: rating.optional().nullable(),
+  singalongScore: rating.optional().nullable(),
+  peakHourScore: rating.optional().nullable(),
+  transitionFlexibility: rating.optional().nullable(),
+  audienceAgeAppeal: audienceAgeAppealArraySchema.optional().nullable(),
+  femaleParticipationScore: rating.optional().nullable(),
+  singalongScoreSource: source,
+  peakHourScoreSource: source,
+  transitionFlexibilitySource: source,
+  audienceAgeAppealSource: source,
+  femaleParticipationScoreSource: source,
   openerCandidate: z.boolean().optional().nullable(),
   closerCandidate: z.boolean().optional().nullable(),
-  leadSinger: z.string().max(120).optional().nullable(),
   capoOrTuning: z.string().max(120).optional().nullable(),
   avoidAfter: z.string().max(500).optional().nullable(),
 });

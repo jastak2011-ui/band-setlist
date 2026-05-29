@@ -2,8 +2,10 @@
 import { z } from "zod";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
+import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 
 const rating = z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value));
+const source = z.enum(["manual", "inferred"]).nullable().optional();
 
 const patch = z.object({
   title: z.string().min(1).optional(),
@@ -18,9 +20,18 @@ const patch = z.object({
   crowdScore: rating.nullable().optional(),
   danceability: rating.nullable().optional(),
   vocalDifficulty: rating.nullable().optional(),
+  singalongScore: rating.nullable().optional(),
+  peakHourScore: rating.nullable().optional(),
+  transitionFlexibility: rating.nullable().optional(),
+  audienceAgeAppeal: audienceAgeAppealArraySchema.nullable().optional(),
+  femaleParticipationScore: rating.nullable().optional(),
+  singalongScoreSource: source,
+  peakHourScoreSource: source,
+  transitionFlexibilitySource: source,
+  audienceAgeAppealSource: source,
+  femaleParticipationScoreSource: source,
   openerCandidate: z.boolean().nullable().optional(),
   closerCandidate: z.boolean().nullable().optional(),
-  leadSinger: z.string().max(120).nullable().optional(),
   capoOrTuning: z.string().max(120).nullable().optional(),
   avoidAfter: z.string().max(500).nullable().optional(),
 });
@@ -40,9 +51,18 @@ const columnMap: Record<string, string> = {
   crowdScore: "crowd_score",
   danceability: "danceability",
   vocalDifficulty: "vocal_difficulty",
+  singalongScore: "singalong_score",
+  peakHourScore: "peak_hour_score",
+  transitionFlexibility: "transition_flexibility",
+  audienceAgeAppeal: "audience_age_appeal",
+  femaleParticipationScore: "female_participation_score",
+  singalongScoreSource: "singalong_score_source",
+  peakHourScoreSource: "peak_hour_score_source",
+  transitionFlexibilitySource: "transition_flexibility_source",
+  audienceAgeAppealSource: "audience_age_appeal_source",
+  femaleParticipationScoreSource: "female_participation_score_source",
   openerCandidate: "opener_candidate",
   closerCandidate: "closer_candidate",
-  leadSinger: "lead_singer",
   capoOrTuning: "capo_or_tuning",
   avoidAfter: "avoid_after",
 };

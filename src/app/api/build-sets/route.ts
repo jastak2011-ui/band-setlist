@@ -53,9 +53,12 @@ export async function POST(req: Request) {
     crowdScore: r.crowdScore,
     danceability: r.danceability,
     vocalDifficulty: r.vocalDifficulty,
+    singalongScore: r.singalongScore,
+    peakHourScore: r.peakHourScore,
+    transitionFlexibility: r.transitionFlexibility,
+    femaleParticipationScore: r.femaleParticipationScore,
     openerCandidate: r.openerCandidate,
     closerCandidate: r.closerCandidate,
-    leadSinger: r.leadSinger,
     capoOrTuning: r.capoOrTuning,
     avoidAfter: r.avoidAfter,
   }));

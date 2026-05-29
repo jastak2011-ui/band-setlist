@@ -3,6 +3,7 @@ import { z } from "zod";
 import Papa from "papaparse";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { findOrCreateSong } from "@/lib/song-import";
+import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 
 type RawImportRow = Record<string, unknown>;
 
@@ -19,9 +20,13 @@ const aliases = {
   crowd_score: ["crowd_score", "crowd", "familiarity"],
   danceability: ["danceability", "dance"],
   vocal_difficulty: ["vocal_difficulty", "vocal"],
+  singalong_score: ["singalong_score", "singalong", "sing_along"],
+  peak_hour_score: ["peak_hour_score", "peak_hour", "peak"],
+  transition_flexibility: ["transition_flexibility", "transition", "flexibility"],
+  audience_age_appeal: ["audience_age_appeal", "age_appeal", "audience_age"],
+  female_participation_score: ["female_participation_score", "female_participation", "female_engagement"],
   opener_candidate: ["opener_candidate", "opener"],
   closer_candidate: ["closer_candidate", "closer"],
-  lead_singer: ["lead_singer", "singer"],
   capo_or_tuning: ["capo_or_tuning", "capo", "tuning"],
   avoid_after: ["avoid_after"],
 } as const;
@@ -48,6 +53,12 @@ const optionalRating = optionalNumber.pipe(
   z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value)).optional().nullable(),
 );
 const optionalText = z.preprocess(emptyToNull, z.string().optional().nullable());
+const optionalTextArray = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.split(/[;,|]/).map((item) => item.trim()).filter(Boolean);
+}, audienceAgeAppealArraySchema.optional().nullable());
 const optionalBool = z.preprocess((value) => {
   if (typeof value !== "string") return value;
   const normalized = value.trim().toLowerCase();
@@ -70,9 +81,13 @@ const rowSchema = z.object({
   crowd_score: optionalRating,
   danceability: optionalRating,
   vocal_difficulty: optionalRating,
+  singalong_score: optionalRating,
+  peak_hour_score: optionalRating,
+  transition_flexibility: optionalRating,
+  audience_age_appeal: optionalTextArray,
+  female_participation_score: optionalRating,
   opener_candidate: optionalBool,
   closer_candidate: optionalBool,
-  lead_singer: optionalText.pipe(z.string().max(120).optional().nullable()),
   capo_or_tuning: optionalText.pipe(z.string().max(120).optional().nullable()),
   avoid_after: optionalText.pipe(z.string().max(500).optional().nullable()),
 });
@@ -104,9 +119,13 @@ function canonicalizeRow(raw: RawImportRow) {
     crowd_score: canonicalValue(normalized, "crowd_score"),
     danceability: canonicalValue(normalized, "danceability"),
     vocal_difficulty: canonicalValue(normalized, "vocal_difficulty"),
+    singalong_score: canonicalValue(normalized, "singalong_score"),
+    peak_hour_score: canonicalValue(normalized, "peak_hour_score"),
+    transition_flexibility: canonicalValue(normalized, "transition_flexibility"),
+    audience_age_appeal: canonicalValue(normalized, "audience_age_appeal"),
+    female_participation_score: canonicalValue(normalized, "female_participation_score"),
     opener_candidate: canonicalValue(normalized, "opener_candidate"),
     closer_candidate: canonicalValue(normalized, "closer_candidate"),
-    lead_singer: canonicalValue(normalized, "lead_singer"),
     capo_or_tuning: canonicalValue(normalized, "capo_or_tuning"),
     avoid_after: canonicalValue(normalized, "avoid_after"),
   };
@@ -205,9 +224,13 @@ export async function POST(req: Request) {
         crowdScore: row.data.crowd_score ?? null,
         danceability: row.data.danceability ?? null,
         vocalDifficulty: row.data.vocal_difficulty ?? null,
+        singalongScore: row.data.singalong_score ?? null,
+        peakHourScore: row.data.peak_hour_score ?? null,
+        transitionFlexibility: row.data.transition_flexibility ?? null,
+        audienceAgeAppeal: row.data.audience_age_appeal ?? null,
+        femaleParticipationScore: row.data.female_participation_score ?? null,
         openerCandidate: row.data.opener_candidate ?? null,
         closerCandidate: row.data.closer_candidate ?? null,
-        leadSinger: row.data.lead_singer ?? null,
         capoOrTuning: row.data.capo_or_tuning ?? null,
         avoidAfter: row.data.avoid_after ?? null,
       });

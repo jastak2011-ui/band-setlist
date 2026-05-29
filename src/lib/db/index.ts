@@ -89,9 +89,18 @@ async function bootstrapDatabase(db: Queryable) {
       crowd_score DOUBLE PRECISION,
       danceability DOUBLE PRECISION,
       vocal_difficulty DOUBLE PRECISION,
+      singalong_score DOUBLE PRECISION,
+      peak_hour_score DOUBLE PRECISION,
+      transition_flexibility DOUBLE PRECISION,
+      audience_age_appeal TEXT[],
+      female_participation_score DOUBLE PRECISION,
+      singalong_score_source TEXT,
+      peak_hour_score_source TEXT,
+      transition_flexibility_source TEXT,
+      audience_age_appeal_source TEXT,
+      female_participation_score_source TEXT,
       opener_candidate BOOLEAN,
       closer_candidate BOOLEAN,
-      lead_singer TEXT,
       capo_or_tuning TEXT,
       avoid_after TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -188,9 +197,18 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "songs", "crowd_score", "DOUBLE PRECISION");
   await addColumnIfMissing(db, "songs", "danceability", "DOUBLE PRECISION");
   await addColumnIfMissing(db, "songs", "vocal_difficulty", "DOUBLE PRECISION");
+  await addColumnIfMissing(db, "songs", "singalong_score", "DOUBLE PRECISION");
+  await addColumnIfMissing(db, "songs", "peak_hour_score", "DOUBLE PRECISION");
+  await addColumnIfMissing(db, "songs", "transition_flexibility", "DOUBLE PRECISION");
+  await addColumnIfMissing(db, "songs", "audience_age_appeal", "TEXT[]");
+  await addColumnIfMissing(db, "songs", "female_participation_score", "DOUBLE PRECISION");
+  await addColumnIfMissing(db, "songs", "singalong_score_source", "TEXT");
+  await addColumnIfMissing(db, "songs", "peak_hour_score_source", "TEXT");
+  await addColumnIfMissing(db, "songs", "transition_flexibility_source", "TEXT");
+  await addColumnIfMissing(db, "songs", "audience_age_appeal_source", "TEXT");
+  await addColumnIfMissing(db, "songs", "female_participation_score_source", "TEXT");
   await addColumnIfMissing(db, "songs", "opener_candidate", "BOOLEAN");
   await addColumnIfMissing(db, "songs", "closer_candidate", "BOOLEAN");
-  await addColumnIfMissing(db, "songs", "lead_singer", "TEXT");
   await addColumnIfMissing(db, "songs", "capo_or_tuning", "TEXT");
   await addColumnIfMissing(db, "songs", "avoid_after", "TEXT");
   await addColumnIfMissing(db, "songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -223,9 +241,18 @@ export type DbSong = {
   crowdScore: number | null;
   danceability: number | null;
   vocalDifficulty: number | null;
+  singalongScore: number | null;
+  peakHourScore: number | null;
+  transitionFlexibility: number | null;
+  audienceAgeAppeal: string[] | null;
+  femaleParticipationScore: number | null;
+  singalongScoreSource: string | null;
+  peakHourScoreSource: string | null;
+  transitionFlexibilitySource: string | null;
+  audienceAgeAppealSource: string | null;
+  femaleParticipationScoreSource: string | null;
   openerCandidate: boolean | null;
   closerCandidate: boolean | null;
-  leadSinger: string | null;
   capoOrTuning: string | null;
   avoidAfter: string | null;
   createdAt: Date;
@@ -258,9 +285,18 @@ export function mapSong(row: QueryResultRow): DbSong {
     crowdScore: row.crowd_score,
     danceability: row.danceability,
     vocalDifficulty: row.vocal_difficulty,
+    singalongScore: row.singalong_score,
+    peakHourScore: row.peak_hour_score,
+    transitionFlexibility: row.transition_flexibility,
+    audienceAgeAppeal: row.audience_age_appeal ?? null,
+    femaleParticipationScore: row.female_participation_score,
+    singalongScoreSource: row.singalong_score_source,
+    peakHourScoreSource: row.peak_hour_score_source,
+    transitionFlexibilitySource: row.transition_flexibility_source,
+    audienceAgeAppealSource: row.audience_age_appeal_source,
+    femaleParticipationScoreSource: row.female_participation_score_source,
     openerCandidate: row.opener_candidate,
     closerCandidate: row.closer_candidate,
-    leadSinger: row.lead_singer,
     capoOrTuning: row.capo_or_tuning,
     avoidAfter: row.avoid_after,
     createdAt: row.created_at,
