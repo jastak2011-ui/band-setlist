@@ -15,6 +15,11 @@ type Song = {
   durationSec?: number | null;
   notes?: string | null;
   capoOrTuning?: string | null;
+  performanceRating?: {
+    crowdResponseScore: number | null;
+    notes: string | null;
+    updatedAt?: string | null;
+  } | null;
 };
 
 type ReplacementPrompt = {
@@ -69,6 +74,56 @@ function redistributeSongs(songs: Song[], count: number) {
   return sets;
 }
 
+function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boolean; onSave: (score: number | null, notes: string | null) => void }) {
+  const [score, setScore] = useState(song.performanceRating?.crowdResponseScore?.toString() ?? "");
+  const [notes, setNotes] = useState(song.performanceRating?.notes ?? "");
+
+  useEffect(() => {
+    setScore(song.performanceRating?.crowdResponseScore?.toString() ?? "");
+    setNotes(song.performanceRating?.notes ?? "");
+  }, [song.id, song.performanceRating?.crowdResponseScore, song.performanceRating?.notes]);
+
+  const parsedScore = score ? Number(score) : null;
+  const validScore = parsedScore == null || (Number.isInteger(parsedScore) && parsedScore >= 1 && parsedScore <= 10);
+
+  return (
+    <div className="col-start-2 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="font-medium text-[var(--text)]">Crowd Response</span>
+        <input
+          className="input h-8 w-20 px-2 py-0 text-xs"
+          inputMode="numeric"
+          placeholder="1-10"
+          value={score}
+          onChange={(event) => setScore(event.target.value)}
+        />
+        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("")}>Blank</button>
+        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("3")}>Poor</button>
+        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("5")}>Okay</button>
+        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("7")}>Good</button>
+        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("9")}>Great</button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="input min-w-64 flex-1 px-2 py-1 text-xs"
+          placeholder="Performance note"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+        />
+        <button
+          type="button"
+          className="btn btn-primary h-8 px-3 py-0 text-xs"
+          disabled={busy || !validScore}
+          onClick={() => onSave(parsedScore, notes.trim() || null)}
+        >
+          {busy ? "Saving" : "Save rating"}
+        </button>
+      </div>
+      {!validScore && <div className="mt-1 text-rose-300">Use a whole number from 1 to 10, or leave blank.</div>}
+    </div>
+  );
+}
+
 async function readErrorMessage(response: Response) {
   const text = await response.text();
   if (!text) return `Request failed (${response.status})`;
@@ -91,6 +146,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [replacementPrompt, setReplacementPrompt] = useState<ReplacementPrompt | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -298,6 +354,37 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg("Saved setlist changes.");
   }
 
+  async function saveRating(setIndex: number, songIndex: number, song: Song, score: number | null, notes: string | null) {
+    const key = `${setIndex}-${song.id}-${songIndex}`;
+    setRatingBusyKey(key);
+    setMsg(null);
+    const response = await fetch(`/api/setlists/${id}/ratings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ songId: song.id, crowdResponseScore: score, notes }),
+    });
+    const json = await response.json().catch(() => null) as { crowdResponseScore?: number | null; notes?: string | null; updatedAt?: string | null; error?: unknown } | null;
+    setRatingBusyKey(null);
+    if (!response.ok || !json) {
+      setMsg(json?.error ? JSON.stringify(json.error) : await readErrorMessage(response));
+      return;
+    }
+    setSets((current) =>
+      current.map((set) => set.index === setIndex ? {
+        ...set,
+        songs: set.songs.map((item, index) => index === songIndex ? {
+          ...item,
+          performanceRating: {
+            crowdResponseScore: json.crowdResponseScore ?? null,
+            notes: json.notes ?? null,
+            updatedAt: json.updatedAt ?? null,
+          },
+        } : item),
+      } : set),
+    );
+    setMsg(`Saved crowd response for ${song.title}.`);
+  }
+
   function resetOrder() {
     if (!data) return;
     setSets(data.sets);
@@ -473,6 +560,11 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                       )}
                     </div>
                   )}
+                  <SongPerformanceRating
+                    song={song}
+                    busy={ratingBusyKey === `${s.index}-${song.id}-${songIndex}`}
+                    onSave={(score, notes) => void saveRating(s.index, songIndex, song, score, notes)}
+                  />
                 </li>
               );
             })}

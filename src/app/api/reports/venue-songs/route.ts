@@ -21,6 +21,17 @@ type SongReportRow = {
   setlist_count: string;
 };
 
+type CrowdResponseRow = {
+  song_id: string;
+  title: string;
+  artist: string;
+  venue_id?: string;
+  venue_name?: string;
+  average_response: number;
+  times_rated: number;
+  last_rated_at: Date | null;
+};
+
 export const dynamic = "force-dynamic";
 
 function buildWhere(venueId: string | null, bandId: string | null, accessibleBandIds: string[] | null) {
@@ -105,6 +116,67 @@ export async function GET(req: Request) {
     `,
     filters.params,
   );
+  const ratingWherePrefix = filters.where ? `${filters.where} AND` : "WHERE";
+  const topCrowdRows = await query<CrowdResponseRow>(
+    `
+    SELECT s.id AS song_id, s.title, s.artist, AVG(spr.crowd_response_score)::float AS average_response,
+      COUNT(*)::int AS times_rated, MAX(spr.performance_date) AS last_rated_at
+    FROM song_performance_ratings spr
+    JOIN songs s ON s.id = spr.song_id
+    JOIN setlists sl ON sl.id = spr.setlist_id
+    ${ratingWherePrefix} spr.crowd_response_score IS NOT NULL
+    GROUP BY s.id, s.title, s.artist
+    ORDER BY average_response DESC, times_rated DESC, lower(s.title)
+    LIMIT 20
+    `,
+    filters.params,
+  );
+  const lowestCrowdRows = await query<CrowdResponseRow>(
+    `
+    SELECT s.id AS song_id, s.title, s.artist, AVG(spr.crowd_response_score)::float AS average_response,
+      COUNT(*)::int AS times_rated, MAX(spr.performance_date) AS last_rated_at
+    FROM song_performance_ratings spr
+    JOIN songs s ON s.id = spr.song_id
+    JOIN setlists sl ON sl.id = spr.setlist_id
+    ${ratingWherePrefix} spr.crowd_response_score IS NOT NULL
+    GROUP BY s.id, s.title, s.artist
+    ORDER BY average_response ASC, times_rated DESC, lower(s.title)
+    LIMIT 20
+    `,
+    filters.params,
+  );
+  const topByVenueRows = await query<CrowdResponseRow>(
+    `
+    SELECT DISTINCT ON (v.id)
+      s.id AS song_id, s.title, s.artist, v.id AS venue_id, v.name AS venue_name,
+      AVG(spr.crowd_response_score)::float AS average_response,
+      COUNT(*)::int AS times_rated,
+      MAX(spr.performance_date) AS last_rated_at
+    FROM song_performance_ratings spr
+    JOIN songs s ON s.id = spr.song_id
+    JOIN setlists sl ON sl.id = spr.setlist_id
+    JOIN venues v ON v.id = spr.venue_id
+    ${ratingWherePrefix} spr.crowd_response_score IS NOT NULL
+    GROUP BY v.id, v.name, s.id, s.title, s.artist
+    ORDER BY v.id, average_response DESC, times_rated DESC, lower(s.title)
+    `,
+    filters.params,
+  );
+  const unratedRows = await query<{ id: string; title: string; artist: string }>(
+    `
+    SELECT s.id, s.title, s.artist
+    FROM songs s
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM song_performance_ratings spr
+      JOIN setlists sl ON sl.id = spr.setlist_id
+      ${ratingWherePrefix} spr.song_id = s.id AND spr.crowd_response_score IS NOT NULL
+    )
+    ORDER BY lower(s.title), lower(s.artist)
+    LIMIT 50
+    `,
+    filters.params,
+  );
 
   const bandMap = new Map<
     string,
@@ -158,7 +230,26 @@ export async function GET(req: Request) {
     });
   }
 
-  return privateJson({ bands: Array.from(bandMap.values()) });
+  const mapCrowdRows = (items: CrowdResponseRow[]) => items.map((row) => ({
+    id: row.song_id,
+    title: row.title,
+    artist: row.artist,
+    venueId: row.venue_id ?? null,
+    venueName: row.venue_name ?? null,
+    averageResponse: Number(row.average_response),
+    timesRated: Number(row.times_rated),
+    lastRatedAt: row.last_rated_at,
+  }));
+
+  return privateJson({
+    bands: Array.from(bandMap.values()),
+    crowdResponse: {
+      topOverall: mapCrowdRows(topCrowdRows.rows),
+      topByVenue: mapCrowdRows(topByVenueRows.rows),
+      lowest: mapCrowdRows(lowestCrowdRows.rows),
+      unrated: unratedRows.rows.map((row) => ({ id: row.id, title: row.title, artist: row.artist })),
+    },
+  });
   } catch (error) {
     return authErrorResponse(error);
   }

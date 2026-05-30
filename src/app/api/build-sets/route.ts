@@ -2,7 +2,7 @@ import { z } from "zod";
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { querySongsByIds } from "@/lib/db";
 import { buildSets, explainBuiltSets, type SetBuildEventType, type SongForSet } from "@/lib/set-builder";
-import { getVenueSongPlayCounts, scoreSongForRecommendation } from "@/lib/recommendations";
+import { getCrowdResponseStats, getVenueSongPlayCounts, scoreVenueAwareRecommendation } from "@/lib/recommendations";
 import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 const strategy = z.enum(["balanced", "high-energy", "dance-heavy", "singalong-heavy", "acoustic-chill", "build-slowly"]);
@@ -91,9 +91,14 @@ export async function POST(req: Request) {
 
   if (parsed.data.venueId) {
     const counts = await getVenueSongPlayCounts(parsed.data.venueId, parsed.data.bandId);
+    const responseStats = await getCrowdResponseStats(parsed.data.venueId, parsed.data.bandId);
     const scored = buildableSongs
-      .map((s) => ({ song: s, score: scoreSongForRecommendation(s.id, counts), plays: counts.get(s.id) ?? 0 }))
-      .sort((a, b) => a.score - b.score || a.plays - b.plays);
+      .map((s) => ({
+        song: s,
+        score: scoreVenueAwareRecommendation(s, counts, parsed.data.eventType ?? "bar-crowd", responseStats.get(s.id)).score,
+        plays: counts.get(s.id) ?? 0,
+      }))
+      .sort((a, b) => b.score - a.score || a.plays - b.plays);
 
     const preferredOrder = scored.map((x) => x.song);
     const preferredIds = new Set(preferredOrder.map((s) => s.id));

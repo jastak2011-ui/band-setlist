@@ -140,7 +140,6 @@ async function bootstrapDatabase(db: Queryable) {
     CREATE INDEX IF NOT EXISTS idx_setlist_sets_list ON setlist_sets(setlist_id);
     CREATE INDEX IF NOT EXISTS idx_setlist_set_songs_set ON setlist_set_songs(set_id);
     CREATE INDEX IF NOT EXISTS idx_setlist_set_songs_song ON setlist_set_songs(song_id);
-
     CREATE TABLE IF NOT EXISTS app_users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
@@ -150,6 +149,26 @@ async function bootstrapDatabase(db: Queryable) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS song_performance_ratings (
+      id TEXT PRIMARY KEY,
+      song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+      setlist_id TEXT NOT NULL REFERENCES setlists(id) ON DELETE CASCADE,
+      band_id TEXT REFERENCES bands(id) ON DELETE SET NULL,
+      venue_id TEXT NOT NULL REFERENCES venues(id) ON DELETE CASCADE,
+      performance_date TIMESTAMPTZ,
+      crowd_response_score INTEGER CHECK (crowd_response_score IS NULL OR (crowd_response_score >= 1 AND crowd_response_score <= 10)),
+      notes TEXT,
+      created_by TEXT REFERENCES app_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (song_id, setlist_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_song_performance_ratings_song ON song_performance_ratings(song_id);
+    CREATE INDEX IF NOT EXISTS idx_song_performance_ratings_venue ON song_performance_ratings(venue_id);
+    CREATE INDEX IF NOT EXISTS idx_song_performance_ratings_band ON song_performance_ratings(band_id);
+    CREATE INDEX IF NOT EXISTS idx_song_performance_ratings_setlist ON song_performance_ratings(setlist_id);
 
     CREATE TABLE IF NOT EXISTS user_roles (
       user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,

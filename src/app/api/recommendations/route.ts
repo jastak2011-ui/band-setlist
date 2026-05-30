@@ -1,6 +1,6 @@
 import { authErrorResponse, privateJson, requireBandAccess, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
-import { getVenueSongPlayCounts, poorRecommendationReasons, scoreVenueAwareRecommendation, type RecommendationEventType } from "@/lib/recommendations";
+import { getCrowdResponseStats, getVenueSongPlayCounts, poorRecommendationReasons, scoreVenueAwareRecommendation, type RecommendationEventType } from "@/lib/recommendations";
 import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 export const dynamic = "force-dynamic";
@@ -22,11 +22,12 @@ export async function GET(req: Request) {
   const excludedHolidayIds = new Set(holidayExcluded.map((song) => song.id));
   const seed = Number(url.searchParams.get("seed") ?? Date.now());
   const counts = await getVenueSongPlayCounts(venueId, bandId);
+  const responseStats = await getCrowdResponseStats(venueId, bandId);
 
   const ranked = allSongs
     .filter((song) => !excludedHolidayIds.has(song.id))
     .map((s) => {
-      const recommendation = scoreVenueAwareRecommendation(s, counts, eventType);
+      const recommendation = scoreVenueAwareRecommendation(s, counts, eventType, responseStats.get(s.id));
       return { song: s, plays: counts.get(s.id) ?? 0, ...recommendation, tie: seededSongTie(s.id, seed) };
     })
     .sort((a, b) => b.score - a.score || a.plays - b.plays || a.tie - b.tie);
@@ -49,7 +50,7 @@ export async function GET(req: Request) {
       scoringDetails: r.scoringDetails,
     })),
     excluded: holidayExcluded.map((song) => {
-      const recommendation = scoreVenueAwareRecommendation(song, counts, eventType);
+      const recommendation = scoreVenueAwareRecommendation(song, counts, eventType, responseStats.get(song.id));
       return {
         id: song.id,
         title: song.title,

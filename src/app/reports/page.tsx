@@ -27,9 +27,28 @@ type BandReport = {
   totalSetlists: number;
   venues: VenueReport[];
 };
+type CrowdResponseSong = {
+  id: string;
+  title: string;
+  artist: string;
+  venueName?: string | null;
+  averageResponse: number;
+  timesRated: number;
+  lastRatedAt: string | null;
+};
+type CrowdResponseReport = {
+  topOverall: CrowdResponseSong[];
+  topByVenue: CrowdResponseSong[];
+  lowest: CrowdResponseSong[];
+  unrated: Array<{ id: string; title: string; artist: string }>;
+};
 
 function formatPercent(value: number) {
   return `${Math.round(value)}%`;
+}
+
+function formatRating(value: number) {
+  return `${Number(value).toFixed(1)}/10`;
 }
 
 export default function ReportsPage() {
@@ -39,6 +58,7 @@ export default function ReportsPage() {
   const [venueId, setVenueId] = useState("");
   const [bandId, setBandId] = useState("");
   const [reports, setReports] = useState<BandReport[]>([]);
+  const [crowdResponse, setCrowdResponse] = useState<CrowdResponseReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null);
@@ -95,12 +115,14 @@ export default function ReportsPage() {
     const query = params.toString();
     try {
       const response = await fetch(`/api/reports/venue-songs${query ? `?${query}` : ""}`, { cache: "no-store" });
-      const json = await readObjectResponse<{ bands?: unknown }>(response, router, "Report");
+      const json = await readObjectResponse<{ bands?: unknown; crowdResponse?: CrowdResponseReport }>(response, router, "Report");
       setReports(Array.isArray(json?.bands) ? json.bands as BandReport[] : []);
+      setCrowdResponse(json?.crowdResponse ?? null);
       setGeneratedAt(new Date());
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "Failed to load report.");
       setReports([]);
+      setCrowdResponse(null);
     } finally {
       setLoading(false);
     }
@@ -155,6 +177,32 @@ export default function ReportsPage() {
       </section>
 
       {msg && <div className="no-print rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{msg}</div>}
+
+      {crowdResponse && (
+        <section className="card">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-medium text-[var(--accent)]">Crowd response</h2>
+            <div className="text-sm text-[var(--muted)]">{loading ? "Loading..." : `${selectedBandName} / ${selectedVenueName}`}</div>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <CrowdResponseList title="Top crowd-response songs overall" songs={crowdResponse.topOverall} />
+            <CrowdResponseList title="Top songs by venue" songs={crowdResponse.topByVenue} showVenue />
+            <CrowdResponseList title="Lowest response songs" songs={crowdResponse.lowest} />
+            <div>
+              <h3 className="mb-2 text-sm font-medium">Songs with no ratings yet</h3>
+              {crowdResponse.unrated.length === 0 ? (
+                <div className="rounded-lg border border-[var(--border)] px-3 py-3 text-sm text-[var(--muted)]">Every song has at least one rating in this filter.</div>
+              ) : (
+                <ul className="max-h-72 space-y-1 overflow-auto rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                  {crowdResponse.unrated.map((song) => (
+                    <li key={song.id}>{song.title} <span className="text-[var(--muted)]">- {song.artist}</span></li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -218,6 +266,43 @@ export default function ReportsPage() {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+function CrowdResponseList({ title, songs, showVenue = false }: { title: string; songs: CrowdResponseSong[]; showVenue?: boolean }) {
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-medium">{title}</h3>
+      {songs.length === 0 ? (
+        <div className="rounded-lg border border-[var(--border)] px-3 py-3 text-sm text-[var(--muted)]">No rated songs yet.</div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+          <table className="w-full min-w-[420px] border-collapse text-sm">
+            <thead className="bg-[#0f131a] text-left text-xs uppercase text-[var(--muted)]">
+              <tr>
+                <th className="px-3 py-2 font-medium">Song</th>
+                {showVenue && <th className="px-3 py-2 font-medium">Venue</th>}
+                <th className="px-3 py-2 text-right font-medium">Avg</th>
+                <th className="px-3 py-2 text-right font-medium">Rated</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {songs.map((song) => (
+                <tr key={`${song.id}-${song.venueName ?? "all"}`}>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{song.title}</div>
+                    <div className="text-xs text-[var(--muted)]">{song.artist}</div>
+                  </td>
+                  {showVenue && <td className="px-3 py-2 text-[var(--muted)]">{song.venueName ?? "-"}</td>}
+                  <td className="mono px-3 py-2 text-right">{formatRating(song.averageResponse)}</td>
+                  <td className="mono px-3 py-2 text-right">{song.timesRated}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

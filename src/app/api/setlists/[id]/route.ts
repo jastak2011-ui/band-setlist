@@ -29,6 +29,19 @@ async function getSetlistDetail(id: string) {
   if (!list) return null;
 
   const setResult = await query("SELECT * FROM setlist_sets WHERE setlist_id = $1 ORDER BY set_index", [id]);
+  const ratingsResult = await query(
+    `
+    SELECT song_id, crowd_response_score, notes, updated_at
+    FROM song_performance_ratings
+    WHERE setlist_id = $1
+    `,
+    [id],
+  );
+  const ratingsBySong = new Map(ratingsResult.rows.map((row) => [row.song_id as string, {
+    crowdResponseScore: row.crowd_response_score as number | null,
+    notes: row.notes as string | null,
+    updatedAt: row.updated_at as Date,
+  }]));
   const outSets = [];
   for (const set of setResult.rows) {
     const linkResult = await query(
@@ -38,7 +51,15 @@ async function getSetlistDetail(id: string) {
     const ids = linkResult.rows.map((row) => row.song_id as string);
     const songRows = await querySongsByIds(ids);
     const songMap = new Map(songRows.map((row) => [row.id, row]));
-    outSets.push({ index: Number(set.set_index) + 1, songs: linkResult.rows.map((row) => songMap.get(row.song_id)).filter(Boolean) });
+    outSets.push({
+      index: Number(set.set_index) + 1,
+      songs: linkResult.rows
+        .map((row) => {
+          const song = songMap.get(row.song_id);
+          return song ? { ...song, performanceRating: ratingsBySong.get(song.id) ?? null } : null;
+        })
+        .filter(Boolean),
+    });
   }
 
   return {

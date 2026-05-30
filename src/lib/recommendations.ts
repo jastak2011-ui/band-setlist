@@ -10,19 +10,27 @@ type RecommendationSong = {
   artist: string;
   bpm: number | null;
   energy: number | null;
-  genre: string | null;
-  vibe: string | null;
-  notes: string | null;
-  crowdScore: number | null;
-  danceability: number | null;
-  singalongScore: number | null;
-  peakHourScore: number | null;
-  transitionFlexibility: number | null;
-  audienceAgeAppeal: string[] | null;
-  femaleParticipationScore: number | null;
+  genre?: string | null;
+  vibe?: string | null;
+  notes?: string | null;
+  crowdScore?: number | null;
+  danceability?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  audienceAgeAppeal?: string[] | null;
+  femaleParticipationScore?: number | null;
 };
 
 type ScoringDetail = { label: string; value: string | number };
+export type CrowdResponseStats = {
+  venueAverage: number | null;
+  venueCount: number;
+  bandAverage: number | null;
+  bandCount: number;
+  globalAverage: number | null;
+  globalCount: number;
+};
 
 /**
  * Count how often each song appeared in the last N setlists for a venue,
@@ -175,8 +183,26 @@ export function poorRecommendationReasons(song: RecommendationSong, eventType: R
     .map((item) => item.lowReason);
 }
 
-function recommendationReasons(song: RecommendationSong, eventType: RecommendationEventType, recentPlays: number) {
+function bestCrowdResponseSignal(stats?: CrowdResponseStats) {
+  if (!stats) return null;
+  if (stats.venueAverage != null && stats.venueCount > 0) return { scope: "venue", average: stats.venueAverage, count: stats.venueCount };
+  if (stats.bandAverage != null && stats.bandCount > 0) return { scope: "band", average: stats.bandAverage, count: stats.bandCount };
+  if (stats.globalAverage != null && stats.globalCount > 0) return { scope: "overall", average: stats.globalAverage, count: stats.globalCount };
+  return null;
+}
+
+function crowdResponseReason(stats?: CrowdResponseStats) {
+  const signal = bestCrowdResponseSignal(stats);
+  if (!signal) return null;
+  const scope = signal.scope === "venue" ? "at this venue" : signal.scope === "band" ? "with this band" : "overall";
+  const label = signal.average >= 7 ? "Strong history" : signal.average <= 5 ? "Weak history" : "Mixed history";
+  return `${label} ${scope}: ${signal.average.toFixed(1)} avg over ${signal.count} rating${signal.count === 1 ? "" : "s"}`;
+}
+
+function recommendationReasons(song: RecommendationSong, eventType: RecommendationEventType, recentPlays: number, stats?: CrowdResponseStats) {
   const reasons: string[] = [];
+  const historyReason = crowdResponseReason(stats);
+  if (historyReason) reasons.push(historyReason);
   const crowd = rating(song.crowdScore);
   const singalong = rating(song.singalongScore, crowd);
   const dance = rating(song.danceability);
@@ -197,16 +223,46 @@ function recommendationReasons(song: RecommendationSong, eventType: Recommendati
   return reasons.slice(0, 4);
 }
 
-export function scoreVenueAwareRecommendation(song: RecommendationSong, playCounts: Map<string, number>, eventType: RecommendationEventType) {
+export function scoreVenueAwareRecommendation(song: RecommendationSong, playCounts: Map<string, number>, eventType: RecommendationEventType, stats?: CrowdResponseStats) {
   const recentPlays = playCounts.get(song.id) ?? 0;
   const fit = eventFitScore(song, eventType);
   const freshness = Math.max(0, 1 - recentPlays / 4);
-  const score = Math.max(0, Math.min(10, (fit * 0.82 + freshness * 0.18) * 10));
+  const crowdSignal = bestCrowdResponseSignal(stats);
+  const response = crowdSignal ? rating(crowdSignal.average, 5) : null;
+  const blended = response == null ? fit * 0.82 + freshness * 0.18 : fit * 0.68 + response * 0.22 + freshness * 0.1;
+  const score = Math.max(0, Math.min(10, blended * 10));
   return {
     score,
     fitLabel: `${eventLabels[eventType]} Fit`,
-    reasons: recommendationReasons(song, eventType, recentPlays),
+    reasons: recommendationReasons(song, eventType, recentPlays, stats),
     topFactors: topScoringFactors(song, eventType),
     scoringDetails: scoringDetails(song, eventType),
   };
+}
+
+export async function getCrowdResponseStats(venueId: string, bandId?: string) {
+  const result = await query(
+    `
+    SELECT
+      song_id,
+      AVG(crowd_response_score) FILTER (WHERE venue_id = $1)::float AS venue_average,
+      COUNT(*) FILTER (WHERE venue_id = $1)::int AS venue_count,
+      AVG(crowd_response_score) FILTER (WHERE $2::text IS NOT NULL AND band_id = $2)::float AS band_average,
+      COUNT(*) FILTER (WHERE $2::text IS NOT NULL AND band_id = $2)::int AS band_count,
+      AVG(crowd_response_score)::float AS global_average,
+      COUNT(*)::int AS global_count
+    FROM song_performance_ratings
+    WHERE crowd_response_score IS NOT NULL
+    GROUP BY song_id
+    `,
+    [venueId, bandId ?? null],
+  );
+  return new Map<string, CrowdResponseStats>(result.rows.map((row) => [row.song_id as string, {
+    venueAverage: row.venue_average ?? null,
+    venueCount: Number(row.venue_count ?? 0),
+    bandAverage: row.band_average ?? null,
+    bandCount: Number(row.band_count ?? 0),
+    globalAverage: row.global_average ?? null,
+    globalCount: Number(row.global_count ?? 0),
+  }]));
 }

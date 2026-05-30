@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authErrorResponse, requireUser } from "@/lib/auth";
+import { authErrorResponse, getAccessibleBandIds, requireUser } from "@/lib/auth";
 import { mapSong, query } from "@/lib/db";
 import { findOrCreateSong } from "@/lib/song-import";
 import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
@@ -39,9 +39,54 @@ const songInput = z.object({
 
 export async function GET() {
   try {
-    await requireUser();
+    const user = await requireUser();
     const result = await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)");
-    return NextResponse.json(result.rows.map(mapSong));
+    const accessibleBandIds = await getAccessibleBandIds(user);
+    const ratingClause = accessibleBandIds === null ? "" : "AND band_id = ANY($1::text[])";
+    const aliasedRatingClause = accessibleBandIds === null ? "" : "AND spr.band_id = ANY($1::text[])";
+    const ratingParams = accessibleBandIds === null ? [] : [accessibleBandIds];
+    const aggregateResult = await query(
+      `
+      SELECT song_id, AVG(crowd_response_score)::float AS average_response, COUNT(*)::int AS times_rated, MAX(performance_date) AS last_rated_at
+      FROM song_performance_ratings
+      WHERE crowd_response_score IS NOT NULL ${ratingClause}
+      GROUP BY song_id
+      `,
+      ratingParams,
+    );
+    const bestVenueResult = await query(
+      `
+      SELECT DISTINCT ON (spr.song_id)
+        spr.song_id,
+        v.name AS venue_name,
+        AVG(spr.crowd_response_score)::float AS average_response,
+        COUNT(*)::int AS times_rated
+      FROM song_performance_ratings spr
+      JOIN venues v ON v.id = spr.venue_id
+      WHERE spr.crowd_response_score IS NOT NULL ${aliasedRatingClause}
+      GROUP BY spr.song_id, v.id, v.name
+      ORDER BY spr.song_id, average_response DESC, times_rated DESC, lower(v.name)
+      `,
+      ratingParams,
+    );
+    const aggregates = new Map(aggregateResult.rows.map((row) => [row.song_id as string, row]));
+    const bestVenues = new Map(bestVenueResult.rows.map((row) => [row.song_id as string, row]));
+    return NextResponse.json(result.rows.map((row) => {
+      const song = mapSong(row);
+      const aggregate = aggregates.get(song.id);
+      const bestVenue = bestVenues.get(song.id);
+      return {
+        ...song,
+        crowdResponseAverage: aggregate?.average_response ?? null,
+        crowdResponseCount: aggregate?.times_rated ?? 0,
+        crowdResponseLastRatedAt: aggregate?.last_rated_at ?? null,
+        crowdResponseBestVenue: bestVenue ? {
+          name: bestVenue.venue_name,
+          average: bestVenue.average_response,
+          count: bestVenue.times_rated,
+        } : null,
+      };
+    }));
   } catch (error) {
     return authErrorResponse(error);
   }

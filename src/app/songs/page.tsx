@@ -32,6 +32,10 @@ type Song = {
   closerCandidate: boolean | null;
   capoOrTuning: string | null;
   avoidAfter: string | null;
+  crowdResponseAverage?: number | null;
+  crowdResponseCount?: number;
+  crowdResponseLastRatedAt?: string | null;
+  crowdResponseBestVenue?: { name: string; average: number; count: number } | null;
 };
 
 type SongForm = {
@@ -211,6 +215,14 @@ function formatDuration(seconds: number | null) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function formatCrowdResponseRating(value: number | null | undefined) {
+  return value == null ? "-" : `${Number(value).toFixed(1)}/10`;
+}
+
+function formatShortDate(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleDateString() : "-";
 }
 
 function downloadTextTemplate(filename: string, content: string, type: string) {
@@ -1293,7 +1305,7 @@ export default function SongsPage() {
             total {bulkEnrichProgress.total} · processed {bulkEnrichProgress.processed} · updated {bulkEnrichProgress.updated} · skipped {bulkEnrichProgress.skipped} · failed {bulkEnrichProgress.failed}
           </div>
         )}
-        <table className="w-full min-w-[900px] text-left text-sm">
+        <table className="w-full min-w-[1100px] text-left text-sm">
           <thead className="text-[var(--muted)]">
             <tr>
               <th className="pb-2 pr-2">Title</th>
@@ -1302,6 +1314,7 @@ export default function SongsPage() {
               <th className="pb-2 pr-2">Key</th>
               <th className="pb-2 pr-2">Dur</th>
               <th className="pb-2 pr-2">Smart</th>
+              <th className="pb-2 pr-2">Crowd Response</th>
               <th className="pb-2"> </th>
             </tr>
           </thead>
@@ -1353,6 +1366,17 @@ export default function SongsPage() {
                       {isEditing ? "Editing smart metadata below" : smartSummary(s)}
                     </span>
                   </td>
+                  <td className="py-2 pr-2 align-top">
+                    <span className="block min-w-40 whitespace-normal text-[var(--muted)]">
+                      Avg {formatCrowdResponseRating(s.crowdResponseAverage)}
+                      <br />
+                      Rated {s.crowdResponseCount ?? 0}x
+                      <br />
+                      Best venue: {s.crowdResponseBestVenue ? `${s.crowdResponseBestVenue.name} (${formatCrowdResponseRating(s.crowdResponseBestVenue.average)})` : "-"}
+                      <br />
+                      Last: {formatShortDate(s.crowdResponseLastRatedAt)}
+                    </span>
+                  </td>
                   <td className="py-2 text-right align-top">
                     {isEditing ? (
                       <div className="flex flex-wrap justify-end gap-2">
@@ -1376,7 +1400,7 @@ export default function SongsPage() {
               if (smartStatusById[s.id]) {
                 rows.push(
                   <tr key={`${s.id}-smart-status`} className="border-t border-[var(--border)] bg-[#10151e]">
-                    <td colSpan={7} className="px-3 py-2">
+                    <td colSpan={8} className="px-3 py-2">
                       <div className="mx-auto max-w-5xl rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
                         {smartStatusById[s.id]}
                       </div>
@@ -1388,7 +1412,7 @@ export default function SongsPage() {
               if (isEditing) {
                 rows.push(
                   <tr key={`${s.id}-edit-panel`} className="border-t border-[var(--border)] bg-[#0f131a]">
-                    <td colSpan={7} className="px-3 py-4">
+                    <td colSpan={8} className="px-3 py-4">
                       <div className="mx-auto max-w-5xl space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
                           <span className="text-[var(--muted)]">Use the current edit row values for Deezer, MusicBrainz, Last.fm, and local library enrichment.</span>
@@ -1406,7 +1430,7 @@ export default function SongsPage() {
               if (smartPreview?.songId === s.id) {
                 rows.push(
                   <tr key={`${s.id}-smart-preview`} className="border-t border-[var(--border)] bg-[#10151e]">
-                    <td colSpan={7} className="px-3 py-4">
+                    <td colSpan={8} className="px-3 py-4">
                       <div className="mx-auto max-w-5xl rounded-lg border border-[var(--border)] px-4 py-3 text-sm">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
