@@ -16,6 +16,7 @@ const nav = [
   { href: "/builder", label: "Set builder" },
   { href: "/history", label: "Set History" },
   { href: "/reports", label: "Reports" },
+  { href: "/about", label: "About" },
   { href: "/admin", label: "Admin" },
 ];
 
