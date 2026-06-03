@@ -318,6 +318,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       format: parsed.format,
+      songsFound: parsed.rows.length,
       imported: ids.length,
       ids,
       created: counts.created,

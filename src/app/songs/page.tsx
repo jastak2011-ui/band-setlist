@@ -796,7 +796,11 @@ export default function SongsPage() {
     if (!r.ok) setMsg(data.error?.join?.() ?? JSON.stringify(data));
     else {
       const errorNote = data.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
-      setMsg(`${data.format ?? "File"} import complete: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped, ${data.skipped ?? 0} skipped.${errorNote}`);
+      if (data.format === "OnSong") {
+        setMsg(`OnSong archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
+      } else {
+        setMsg(`${data.format ?? "File"} import complete: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped, ${data.skipped ?? 0} skipped.${errorNote}`);
+      }
     }
     await load();
   }
@@ -1223,26 +1227,27 @@ export default function SongsPage() {
 
         <div className="card space-y-4">
           <div>
-            <h2 className="font-medium">Import CSV or HTML</h2>
+            <h2 className="font-medium">Import CSV, HTML, or OnSong Archive</h2>
             <p className="mt-1 text-xs text-[var(--muted)]">
-              CSV files and table-based HTML exports are supported. Existing songs are matched by normalized title and artist so importing the same file twice will reuse the library song.
+              CSV/HTML imports basic song metadata. OnSong .archive imports preserve OnSong identity fields for round-trip export back into OnSong.
             </p>
           </div>
           <input
             type="file"
-            accept=".csv,text/csv,.html,.htm,text/html"
+            accept=".csv,text/csv,.html,.htm,text/html,.archive,application/octet-stream"
             disabled={csvBusy}
             onChange={(e) => void importSongLibrary(e.target.files?.[0] ?? null)}
             className="text-sm text-[var(--muted)]"
           />
           <div className="rounded-md border border-[var(--border)] bg-black/10 p-3 text-xs text-[var(--muted)]">
-            <p className="font-medium text-[var(--fg)]">CSV or HTML import supported</p>
+            <p className="font-medium text-[var(--fg)]">CSV, HTML, and OnSong .archive import supported</p>
             <p className="mt-2">Required field: <span className="font-mono text-[var(--fg)]">title</span></p>
             <p className="mt-1">
               Optional fields: artist, key, capo, bpm, duration, energy, genre, notes, vibe, crowd_score, danceability, vocal_difficulty, singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score, opener_candidate, closer_candidate, capo_or_tuning, avoid_after.
             </p>
             <p className="mt-2">Common aliases work too, including song, name, performer, musical_key, tempo, length, comments, style, and mood.</p>
             <p className="mt-2">HTML imports should use a table with headers like Title, Artist, Key, and Capo. SET marker rows such as SET 2 or Set 3 are ignored.</p>
+            <p className="mt-2">OnSong archives preserve original OnSong song IDs, filepaths, hashes, content, and lyrics when available, so later OnSong exports can link back to the existing songs.</p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <pre className="overflow-x-auto rounded border border-[var(--border)] bg-[var(--bg)] p-2">title,artist,key,bpm{"\n"}Example Song,Example Artist,G,120</pre>
               <pre className="overflow-x-auto rounded border border-[var(--border)] bg-[var(--bg)] p-2">&lt;table&gt;{"\n"}  &lt;tr&gt;&lt;th&gt;Title&lt;/th&gt;&lt;th&gt;Artist&lt;/th&gt;&lt;/tr&gt;{"\n"}  &lt;tr&gt;&lt;td&gt;Example Song&lt;/td&gt;&lt;td&gt;Example Artist&lt;/td&gt;&lt;/tr&gt;{"\n"}&lt;/table&gt;</pre>
@@ -1333,7 +1338,7 @@ export default function SongsPage() {
                       <>
                         {s.title}
                         {isDuplicate && <span className="ml-2 rounded border border-amber-500/30 px-1.5 py-0.5 text-[10px] text-amber-200">Duplicate</span>}
-                        {s.onsongSongId && <span className="ml-2 rounded border border-emerald-500/30 px-1.5 py-0.5 text-[10px] text-emerald-200">OnSong linked</span>}
+                        {s.onsongSongId && <span className="ml-2 rounded border border-emerald-500/30 px-1.5 py-0.5 text-[10px] text-emerald-200">OnSong Linked</span>}
                       </>
                     )}
                   </td>
