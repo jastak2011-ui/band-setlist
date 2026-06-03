@@ -608,24 +608,28 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               );
             })}
           </ol>
-          <table className="print-only w-full border-collapse text-sm leading-tight">
+          <table className="print-only w-full table-fixed border-collapse text-sm leading-tight">
+            <colgroup>
+              <col className="w-[8%]" />
+              <col className="w-[46%]" />
+              <col className="w-[34%]" />
+              <col className="w-[12%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-[var(--border)] text-left">
                 <th className="py-1 pr-2 font-medium">#</th>
                 <th className="py-1 pr-2 font-medium">Song</th>
                 <th className="py-1 pr-2 font-medium">Artist</th>
                 <th className="py-1 pr-2 text-right font-medium">BPM</th>
-                <th className="py-1 font-medium">Notes</th>
               </tr>
             </thead>
             <tbody>
               {s.songs.map((song, songIndex) => (
                 <tr key={`print-${s.index}-${song.id}-${songIndex}`} className="border-b border-[var(--border)]">
                   <td className="py-1 pr-2 align-top">{songIndex + 1}</td>
-                  <td className="py-1 pr-2 align-top font-medium">{song.title}</td>
-                  <td className="py-1 pr-2 align-top">{song.artist}</td>
+                  <td className="break-words py-1 pr-2 align-top font-medium">{song.title}</td>
+                  <td className="break-words py-1 pr-2 align-top">{song.artist}</td>
                   <td className="py-1 pr-2 text-right align-top font-medium">{song.bpm ?? "-"}</td>
-                  <td className="py-1 align-top">{song.notes || ""}</td>
                 </tr>
               ))}
             </tbody>
