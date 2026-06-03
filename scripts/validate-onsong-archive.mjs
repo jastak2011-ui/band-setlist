@@ -130,6 +130,11 @@ function validateArchive(path) {
   if (classFor(collection) !== "SongSetItemCollection") errors.push("songs is not SongSetItemCollection.");
   if (!Array.isArray(itemArray?.["NS.objects"])) errors.push("collection does not contain NS.objects.");
   if (items.length !== itemArray?.["NS.objects"]?.length) errors.push("SongSet item count does not match collection count.");
+  if (archive.$top?.root?.UID !== 1) errors.push("SongSet root is not object 1.");
+  if (classFor(objects[1]) !== "SongSet") errors.push("Object 1 is not SongSet.");
+  if (classFor(objects[2]) !== "SongSetItemCollection") errors.push("Object 2 is not SongSetItemCollection.");
+  if (objects[3] !== "SongSetItem") errors.push('Object 3 is not the "SongSetItem" collection class string.');
+  if (classFor(objects[4]) !== "NSMutableArray") errors.push("Object 4 is not the SongSetItem NSMutableArray.");
 
   const songClass = classDictionaries.get("Song");
   const songSetClass = classDictionaries.get("SongSet");
@@ -152,16 +157,39 @@ function validateArchive(path) {
     "imported",
   ];
   const stringSortFields = ["sortTitle", "sortTitleStripped", "alpha", "alphaStripped"];
+  const requiredNoteKeys = [
+    "showNotes",
+    "performTransposition",
+    "adjustForCapo",
+    "showSectionLabels",
+    "showTablature",
+    "language",
+    "beatsPerLine",
+    "showTitle",
+    "tablatureSize",
+    "showLyrics",
+    "showChords",
+    "showCapoedChords",
+    "zoomScale",
+    "showMetadata",
+    "chords",
+    "stickyNotes",
+  ];
   const setIds = new Set();
 
   items.forEach((item, index) => {
+    const itemObjectIndex = itemArray["NS.objects"][index]?.UID;
     const song = uid(objects, item.song);
+    const songObjectIndex = item.song?.UID;
     const itemSongId = uid(objects, item.songID);
     const songId = uid(objects, song?.ID);
     const itemSetId = uid(objects, item.setID);
     setIds.add(itemSetId);
     if (classFor(item) !== "SongSetItem") errors.push(`Item ${index} is not SongSetItem.`);
     if (classFor(song) !== "Song") errors.push(`Item ${index} embedded song is not Song.`);
+    if (!Number.isInteger(itemObjectIndex) || !Number.isInteger(songObjectIndex) || songObjectIndex - itemObjectIndex > 3 || songObjectIndex <= itemObjectIndex) {
+      errors.push(`Item ${index} is not followed closely by its embedded Song.`);
+    }
     if (itemSongId !== songId) errors.push(`Item ${index} songID does not match embedded Song ID.`);
     if (uid(objects, item.orderIndex) !== index) errors.push(`Item ${index} orderIndex mismatch.`);
 
@@ -191,6 +219,22 @@ function validateArchive(path) {
       if (refIndex == null || archivedObjectType(refIndex) !== "string" || typeof value !== "string") {
         errors.push(`Song ${index} ${field} is not encoded as a plain string.`);
       }
+    }
+
+    const notes = uid(objects, song?.notes);
+    if (classFor(notes) !== "NSMutableDictionary") {
+      errors.push(`Song ${index} notes is not NSMutableDictionary.`);
+    } else {
+      const noteKeys = Array.isArray(notes["NS.keys"]) ? notes["NS.keys"].map((key) => uid(objects, key)) : [];
+      const noteValues = Array.isArray(notes["NS.objects"]) ? notes["NS.objects"] : [];
+      const noteMap = new Map(noteKeys.map((key, keyIndex) => [key, noteValues[keyIndex]]));
+      for (const key of requiredNoteKeys) {
+        if (!noteMap.has(key)) errors.push(`Song ${index} notes missing ${key}.`);
+      }
+      const chords = uid(objects, noteMap.get("chords"));
+      const stickyNotes = uid(objects, noteMap.get("stickyNotes"));
+      if (classFor(chords) !== "NSDictionary") errors.push(`Song ${index} notes.chords is not NSDictionary.`);
+      if (classFor(stickyNotes) !== "NSArray") errors.push(`Song ${index} notes.stickyNotes is not NSArray.`);
     }
   });
   if (setIds.size > 1) errors.push("SongSetItems do not share the same setID.");
