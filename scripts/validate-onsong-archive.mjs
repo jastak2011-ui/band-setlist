@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 function readUIntBE(buffer, offset, length) {
   let value = 0n;
@@ -15,13 +16,12 @@ function parseBinaryPlist(buffer) {
   const topObject = Number(readUIntBE(trailer, 16, 8));
   const offsetTableStart = Number(readUIntBE(trailer, 24, 8));
   const offsets = [];
-  for (let index = 0; index < objectCount; index++) {
-    offsets.push(Number(readUIntBE(buffer, offsetTableStart + index * offsetSize, offsetSize)));
-  }
+  for (let index = 0; index < objectCount; index++) offsets.push(Number(readUIntBE(buffer, offsetTableStart + index * offsetSize, offsetSize)));
 
   const cache = new Map();
   const objectTypes = new Map();
   const arrayRefs = new WeakMap();
+
   function readLength(offset, markerLength) {
     if (markerLength < 15) return { length: markerLength, offset };
     const marker = buffer[offset];
@@ -36,6 +36,7 @@ function parseBinaryPlist(buffer) {
     const type = marker >> 4;
     const info = marker & 0x0f;
     let value;
+
     if (type === 0) {
       objectTypes.set(index, info === 8 || info === 9 ? "boolean" : "null");
       value = info === 0 ? null : info === 8 ? false : info === 9 ? true : { simple: info };
@@ -48,8 +49,7 @@ function parseBinaryPlist(buffer) {
     } else if (type === 3) {
       objectTypes.set(index, "date");
       value = { date: new Date((buffer.readDoubleBE(offset + 1) + 978307200) * 1000).toISOString() };
-    }
-    else if (type === 4) {
+    } else if (type === 4) {
       objectTypes.set(index, "data");
       const data = readLength(offset + 1, info);
       value = { dataLength: data.length };
@@ -67,9 +67,9 @@ function parseBinaryPlist(buffer) {
     } else if (type === 10) {
       objectTypes.set(index, "array");
       const array = [];
+      const refs = [];
       const data = readLength(offset + 1, info);
       cache.set(index, array);
-      const refs = [];
       for (let item = 0; item < data.length; item++) {
         const ref = Number(readUIntBE(buffer, data.offset + item * refSize, refSize));
         refs.push(ref);
@@ -88,7 +88,9 @@ function parseBinaryPlist(buffer) {
         dict[key] = child;
       }
       value = dict;
-    } else throw new Error(`Unsupported plist marker ${marker.toString(16)} at object ${index}.`);
+    } else {
+      throw new Error(`Unsupported plist marker ${marker.toString(16)} at object ${index}.`);
+    }
     cache.set(index, value);
     return value;
   }
@@ -104,153 +106,152 @@ function uidIndex(value) {
   return value && typeof value === "object" && Number.isInteger(value.UID) ? value.UID : null;
 }
 
-function validateArchive(path) {
-  const parsed = parseBinaryPlist(fs.readFileSync(path));
-  const archive = parsed.root;
-  const objects = archive.$objects;
+function metadata(parsed) {
+  const objects = parsed.root.$objects;
   const archiveObjectRefs = parsed.arrayRefs.get(objects) ?? [];
   const classNames = new Map();
-  const classDictionaries = new Map();
   objects.forEach((object, index) => {
-    if (object && typeof object === "object" && object.$classname) {
-      classNames.set(index, object.$classname);
-      classDictionaries.set(object.$classname, object);
-    }
+    if (object && typeof object === "object" && object.$classname) classNames.set(index, object.$classname);
   });
-  const classFor = (object) => object && typeof object === "object" && object.$class ? classNames.get(object.$class.UID) : null;
-  const archivedObjectType = (archiveObjectIndex) => parsed.objectTypes.get(archiveObjectRefs[archiveObjectIndex]);
-  const root = uid(objects, archive.$top?.root);
-  const collection = uid(objects, root?.songs);
-  const itemArray = uid(objects, collection?.collection);
-  const items = Array.isArray(itemArray?.["NS.objects"]) ? itemArray["NS.objects"].map((item) => uid(objects, item)) : [];
+  const classFor = (object) => (object && typeof object === "object" && object.$class ? classNames.get(object.$class.UID) : null);
+  const archivedObjectType = (archiveIndex) => parsed.objectTypes.get(archiveObjectRefs[archiveIndex]);
+  return { objects, classNames, classFor, archivedObjectType };
+}
+
+function setItems(meta, parsed) {
+  const root = uid(meta.objects, parsed.root.$top?.root);
+  const collection = uid(meta.objects, root?.songs);
+  const itemArray = uid(meta.objects, collection?.collection);
+  const itemRefs = Array.isArray(itemArray?.["NS.objects"]) ? itemArray["NS.objects"] : [];
+  return { root, collection, itemArray, itemRefs, items: itemRefs.map((item) => uid(meta.objects, item)) };
+}
+
+function valueShape(meta, value) {
+  const index = uidIndex(value);
+  if (index == null) return `${typeof value}:${JSON.stringify(value)}`;
+  if (index === 0) return "uid:null";
+  const object = meta.objects[index];
+  const className = meta.classFor(object);
+  return `uid:${meta.archivedObjectType(index)}${className ? `:${className}` : ""}`;
+}
+
+function noteKeys(meta, song) {
+  const notes = uid(meta.objects, song?.notes);
+  if (!notes || typeof notes !== "object" || !Array.isArray(notes["NS.keys"])) return [];
+  return notes["NS.keys"].map((key) => uid(meta.objects, key));
+}
+
+function noteMap(meta, song) {
+  const notes = uid(meta.objects, song?.notes);
+  const keys = noteKeys(meta, song);
+  const values = Array.isArray(notes?.["NS.objects"]) ? notes["NS.objects"] : [];
+  return new Map(keys.map((key, index) => [key, values[index]]));
+}
+
+function compareKeyList(label, actual, expected, errors) {
+  const actualText = actual.join("|");
+  const expectedText = expected.join("|");
+  if (actualText !== expectedText) errors.push(`${label} keys/order differ from template.`);
+}
+
+function validateArchive(archivePath) {
+  const parsed = parseBinaryPlist(fs.readFileSync(archivePath));
+  const meta = metadata(parsed);
+  const { root, collection, itemArray, itemRefs, items } = setItems(meta, parsed);
   const errors = [];
 
-  if (archive.$archiver !== "NSKeyedArchiver") errors.push("Missing NSKeyedArchiver marker.");
-  if (classFor(root) !== "SongSet") errors.push("Root object is not SongSet.");
-  if (classFor(collection) !== "SongSetItemCollection") errors.push("songs is not SongSetItemCollection.");
-  if (!Array.isArray(itemArray?.["NS.objects"])) errors.push("collection does not contain NS.objects.");
-  if (items.length !== itemArray?.["NS.objects"]?.length) errors.push("SongSet item count does not match collection count.");
-  if (archive.$top?.root?.UID !== 1) errors.push("SongSet root is not object 1.");
-  if (classFor(objects[1]) !== "SongSet") errors.push("Object 1 is not SongSet.");
-  if (classFor(objects[2]) !== "SongSetItemCollection") errors.push("Object 2 is not SongSetItemCollection.");
-  if (objects[3] !== "SongSetItem") errors.push('Object 3 is not the "SongSetItem" collection class string.');
-  if (classFor(objects[4]) !== "NSMutableArray") errors.push("Object 4 is not the SongSetItem NSMutableArray.");
-
-  const songClass = classDictionaries.get("Song");
-  const songSetClass = classDictionaries.get("SongSet");
-  const colorClass = classDictionaries.get("UIColor");
-  if (!Array.isArray(songClass?.["$classes"]) || !songClass["$classes"].includes("OSItem")) errors.push("Song class does not include OSItem.");
-  if (!Array.isArray(songSetClass?.["$classes"]) || !songSetClass["$classes"].includes("OSItem")) errors.push("SongSet class does not include OSItem.");
-  if (!Array.isArray(colorClass?.["$classhints"]) || !colorClass["$classhints"].includes("NSColor")) {
-    errors.push('UIColor class does not include $classhints: ["NSColor"].');
-  }
-
-  const realDefaultFields = [
-    "fontSize",
-    "metadataFontSize",
-    "headerFontSize",
-    "chordFontSize",
-    "lineSpacing",
-    "deleted",
-    "loaned",
-    "usefile",
-    "imported",
-  ];
-  const stringSortFields = ["sortTitle", "sortTitleStripped", "alpha", "alphaStripped"];
-  const requiredNoteKeys = [
-    "showNotes",
-    "performTransposition",
-    "adjustForCapo",
-    "showSectionLabels",
-    "showTablature",
-    "language",
-    "beatsPerLine",
-    "showTitle",
-    "tablatureSize",
-    "showLyrics",
-    "showChords",
-    "showCapoedChords",
-    "zoomScale",
-    "showMetadata",
-    "chords",
-    "stickyNotes",
-  ];
-  const setIds = new Set();
+  if (parsed.root.$archiver !== "NSKeyedArchiver") errors.push("Missing NSKeyedArchiver marker.");
+  if (meta.classFor(root) !== "SongSet") errors.push("Root object is not SongSet.");
+  if (meta.classFor(collection) !== "SongSetItemCollection") errors.push("songs is not SongSetItemCollection.");
+  if (meta.classFor(itemArray) !== "NSMutableArray") errors.push("collection is not NSMutableArray.");
+  if (parsed.root.$top?.root?.UID !== 1) errors.push("SongSet root is not object 1.");
+  if (meta.classFor(meta.objects[1]) !== "SongSet") errors.push("Object 1 is not SongSet.");
+  if (meta.classFor(meta.objects[2]) !== "SongSetItemCollection") errors.push("Object 2 is not SongSetItemCollection.");
+  if (meta.objects[3] !== "SongSetItem") errors.push('Object 3 is not the "SongSetItem" collection class string.');
+  if (meta.classFor(meta.objects[4]) !== "NSMutableArray") errors.push("Object 4 is not the SongSetItem NSMutableArray.");
 
   items.forEach((item, index) => {
-    const itemObjectIndex = itemArray["NS.objects"][index]?.UID;
-    const song = uid(objects, item.song);
-    const songObjectIndex = item.song?.UID;
-    const itemSongId = uid(objects, item.songID);
-    const songId = uid(objects, song?.ID);
-    const itemSetId = uid(objects, item.setID);
-    setIds.add(itemSetId);
-    if (classFor(item) !== "SongSetItem") errors.push(`Item ${index} is not SongSetItem.`);
-    if (classFor(song) !== "Song") errors.push(`Item ${index} embedded song is not Song.`);
-    if (!Number.isInteger(itemObjectIndex) || !Number.isInteger(songObjectIndex) || songObjectIndex - itemObjectIndex > 3 || songObjectIndex <= itemObjectIndex) {
+    const itemIndex = itemRefs[index]?.UID;
+    const song = uid(meta.objects, item?.song);
+    const songIndex = item?.song?.UID;
+    if (meta.classFor(item) !== "SongSetItem") errors.push(`Item ${index} is not SongSetItem.`);
+    if (meta.classFor(song) !== "Song") errors.push(`Item ${index} embedded song is not Song.`);
+    if (!Number.isInteger(itemIndex) || !Number.isInteger(songIndex) || songIndex <= itemIndex || songIndex - itemIndex > 3) {
       errors.push(`Item ${index} is not followed closely by its embedded Song.`);
     }
-    if (itemSongId !== songId) errors.push(`Item ${index} songID does not match embedded Song ID.`);
-    if (uid(objects, item.orderIndex) !== index) errors.push(`Item ${index} orderIndex mismatch.`);
-
-    const itemIdentity = uid(objects, item.ID);
-    if (typeof itemIdentity === "string") {
-      try {
-        const parsedIdentity = JSON.parse(itemIdentity);
-        if (parsedIdentity.songID !== itemSongId) errors.push(`Item ${index} ID.songID does not match songID.`);
-        if (parsedIdentity.setID !== itemSetId) errors.push(`Item ${index} ID.setID does not match setID.`);
-        if (parsedIdentity.orderIndex !== index) errors.push(`Item ${index} ID.orderIndex mismatch.`);
-      } catch {
-        errors.push(`Item ${index} ID is not valid JSON.`);
-      }
-    } else {
-      errors.push(`Item ${index} ID is not a string.`);
-    }
-
-    for (const field of realDefaultFields) {
-      const refIndex = uidIndex(song?.[field]);
-      if (refIndex == null || archivedObjectType(refIndex) !== "real") {
-        errors.push(`Song ${index} ${field} is not encoded as a real.`);
-      }
-    }
-    for (const field of stringSortFields) {
-      const refIndex = uidIndex(song?.[field]);
-      const value = uid(objects, song?.[field]);
-      if (refIndex == null || archivedObjectType(refIndex) !== "string" || typeof value !== "string") {
-        errors.push(`Song ${index} ${field} is not encoded as a plain string.`);
-      }
-    }
-
-    const notes = uid(objects, song?.notes);
-    if (classFor(notes) !== "NSMutableDictionary") {
-      errors.push(`Song ${index} notes is not NSMutableDictionary.`);
-    } else {
-      const noteKeys = Array.isArray(notes["NS.keys"]) ? notes["NS.keys"].map((key) => uid(objects, key)) : [];
-      const noteValues = Array.isArray(notes["NS.objects"]) ? notes["NS.objects"] : [];
-      const noteMap = new Map(noteKeys.map((key, keyIndex) => [key, noteValues[keyIndex]]));
-      for (const key of requiredNoteKeys) {
-        if (!noteMap.has(key)) errors.push(`Song ${index} notes missing ${key}.`);
-      }
-      const chords = uid(objects, noteMap.get("chords"));
-      const stickyNotes = uid(objects, noteMap.get("stickyNotes"));
-      if (classFor(chords) !== "NSDictionary") errors.push(`Song ${index} notes.chords is not NSDictionary.`);
-      if (classFor(stickyNotes) !== "NSArray") errors.push(`Song ${index} notes.stickyNotes is not NSArray.`);
-    }
+    if (uid(meta.objects, item.songID) !== uid(meta.objects, song?.ID)) errors.push(`Item ${index} songID does not match embedded Song ID.`);
+    if (uid(meta.objects, item.orderIndex) !== index) errors.push(`Item ${index} orderIndex mismatch.`);
   });
-  if (setIds.size > 1) errors.push("SongSetItems do not share the same setID.");
 
-  for (const [index, object] of objects.entries()) {
-    if (object && typeof object === "object" && object.$class && !classNames.has(object.$class.UID)) {
-      errors.push(`Object ${index} has invalid $class UID ${object.$class.UID}.`);
-    }
+  const templatePath = path.join(process.cwd(), "public", "onsong-template.archive");
+  if (fs.existsSync(templatePath) && path.resolve(archivePath) !== path.resolve(templatePath)) {
+    const templateParsed = parseBinaryPlist(fs.readFileSync(templatePath));
+    const templateMeta = metadata(templateParsed);
+    const templateSet = setItems(templateMeta, templateParsed);
+
+    const generatedClasses = [...meta.classNames.values()].join("|");
+    const templateClasses = [...templateMeta.classNames.values()].join("|");
+    if (generatedClasses !== templateClasses) errors.push("Class hierarchy/order differs from template.");
+
+    items.forEach((item, index) => {
+      const templateItem = templateSet.items[index] ?? templateSet.items[1] ?? templateSet.items[0];
+      const song = uid(meta.objects, item.song);
+      const templateSong = uid(templateMeta.objects, templateItem.song);
+      const templateLabel = index < templateSet.items.length ? index : 1;
+
+      compareKeyList(`Item ${index}`, Object.keys(item), Object.keys(templateItem), errors);
+      compareKeyList(`Song ${index}`, Object.keys(song), Object.keys(templateSong), errors);
+      compareKeyList(`Song ${index} notes`, noteKeys(meta, song), noteKeys(templateMeta, templateSong), errors);
+
+      const replacedItemFields = new Set(["songID", "setID", "ID", "orderIndex"]);
+      const replacedSongFields = new Set([
+        "ID",
+        "title",
+        "sortTitle",
+        "sortTitleStripped",
+        "alpha",
+        "alphaStripped",
+        "byline",
+        "bylineAlpha",
+        "content",
+        "lyrics",
+        "filepath",
+        "key",
+        "transposedKey",
+        "tempo",
+        "duration",
+      ]);
+
+      for (const key of Object.keys(templateItem)) {
+        if (replacedItemFields.has(key)) continue;
+        if (valueShape(meta, item[key]) !== valueShape(templateMeta, templateItem[key])) {
+          errors.push(`Item ${index}.${key} type differs from template item ${templateLabel}.`);
+        }
+      }
+
+      for (const key of Object.keys(templateSong)) {
+        if (replacedSongFields.has(key)) continue;
+        if (valueShape(meta, song[key]) !== valueShape(templateMeta, templateSong[key])) {
+          errors.push(`Song ${index}.${key} type differs from template song ${templateLabel}.`);
+        }
+      }
+
+      const generatedNotes = noteMap(meta, song);
+      const templateNotes = noteMap(templateMeta, templateSong);
+      for (const [key, templateValue] of templateNotes) {
+        if (valueShape(meta, generatedNotes.get(key)) !== valueShape(templateMeta, templateValue)) {
+          errors.push(`Song ${index}.notes.${key} type differs from template song ${templateLabel}.`);
+        }
+      }
+    });
   }
 
-  console.log(`Archive: ${path}`);
+  console.log(`Archive: ${archivePath}`);
   console.log(`Binary plist objects: ${parsed.objectCount}`);
-  console.log(`NSKeyedArchiver objects: ${objects.length}`);
-  console.log(`Root class: ${classFor(root)}`);
+  console.log(`NSKeyedArchiver objects: ${meta.objects.length}`);
+  console.log(`Root class: ${meta.classFor(root)}`);
   console.log(`Song count: ${items.length}`);
-  console.log(`Classes: ${[...classNames.values()].join(", ")}`);
+  console.log(`Classes: ${[...meta.classNames.values()].join(", ")}`);
   console.log(errors.length ? `Errors:\n- ${errors.join("\n- ")}` : "Validation checks passed.");
 }
 

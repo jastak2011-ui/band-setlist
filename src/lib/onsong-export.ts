@@ -1,4 +1,7 @@
-import { BplistData, BplistReal, BplistUid, writeBinaryPlist } from "@/lib/bplist";
+import fs from "node:fs";
+import path from "node:path";
+
+import { BplistData, BplistObject, BplistReal, BplistUid, parseBinaryPlist, writeBinaryPlist } from "@/lib/bplist";
 import type { DbSong, DbSetlist } from "@/lib/db";
 
 type OnSongSetlist = DbSetlist & {
@@ -11,24 +14,21 @@ type OnSongSet = {
   songs: DbSong[];
 };
 
-type ClassName =
-  | "NSDictionary"
-  | "NSArray"
-  | "NSMutableDictionary"
-  | "UIColor"
-  | "NSDate"
-  | "NSMutableString"
-  | "Song"
-  | "SongSetItem"
-  | "NSMutableArray"
-  | "SongSetItemCollection"
-  | "SongSet";
-
-type ClassRef = { kind: "classRef"; name: ClassName };
-type ArchiveValue = unknown;
+type ArchiveDictionary = { [key: string]: BplistObject };
+type SegmentCopy = {
+  map: Map<number, number>;
+  itemIndex: number;
+  songIndex: number;
+};
+type PendingObject = {
+  source: BplistObject;
+  localMap?: Map<number, number>;
+};
 
 const NULL = new BplistUid(0);
-const APPLE_EPOCH_OFFSET_SECONDS = 978307200;
+const TEMPLATE_ARCHIVE_PATH = path.join(process.cwd(), "public", "onsong-template.archive");
+
+let cachedTemplate: ArchiveDictionary | null = null;
 
 function uuidFromSongId(songId: string, index: number) {
   const normalized = songId.replace(/[^a-f0-9]/gi, "").padEnd(32, String(index % 10)).slice(0, 32).toUpperCase();
@@ -44,10 +44,6 @@ function sortTitle(value: string) {
   return value.replace(/^(the|a|an)\s+/i, "").toUpperCase();
 }
 
-function secondsSinceAppleEpoch(date: Date) {
-  return date.getTime() / 1000 - APPLE_EPOCH_OFFSET_SECONDS;
-}
-
 function songContent(song: DbSong) {
   const lines = [`{t:${song.title}}`, `{st:${song.artist}}`];
   if (song.bpm != null) lines.push(`BPM: ${song.bpm}`);
@@ -57,352 +53,215 @@ function songContent(song: DbSong) {
   return lines.join("\n");
 }
 
-function isPlainObject(value: unknown): value is Record<string, ArchiveValue> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(value instanceof BplistUid) && !(value instanceof BplistData) && !(value instanceof BplistReal);
+function isUid(value: BplistObject | undefined): value is BplistUid {
+  const candidate = value as unknown as Partial<BplistUid>;
+  return value instanceof BplistUid || Boolean(value && typeof value === "object" && candidate.kind === "uid" && Number.isInteger(candidate.value));
 }
 
-class ArchiveBuilder {
-  objects: ArchiveValue[] = ["$null"];
-  classIndexes = new Map<ClassName, number>();
+function isDictionary(value: BplistObject | undefined): value is ArchiveDictionary {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !(value instanceof BplistUid) && !(value instanceof BplistData) && !(value instanceof BplistReal);
+}
 
-  reserve() {
-    this.objects.push(null);
-    return this.objects.length - 1;
+function isData(value: BplistObject): value is BplistData {
+  const candidate = value as unknown as Partial<BplistData>;
+  return value instanceof BplistData || Boolean(value && typeof value === "object" && candidate.kind === "data" && Buffer.isBuffer(candidate.value));
+}
+
+function isReal(value: BplistObject): value is BplistReal {
+  const candidate = value as unknown as Partial<BplistReal>;
+  return value instanceof BplistReal || Boolean(value && typeof value === "object" && candidate.kind === "real" && typeof candidate.value === "number");
+}
+
+function asDictionary(value: BplistObject | undefined, label: string): ArchiveDictionary {
+  if (!isDictionary(value)) throw new Error(`Invalid OnSong template: ${label} is not a dictionary.`);
+  return value;
+}
+
+function asObjectArray(value: BplistObject | undefined, label: string): BplistObject[] {
+  if (!Array.isArray(value)) throw new Error(`Invalid OnSong template: ${label} is not an array.`);
+  return value;
+}
+
+function templateArchive() {
+  if (cachedTemplate) return cachedTemplate;
+  cachedTemplate = asDictionary(parseBinaryPlist(fs.readFileSync(TEMPLATE_ARCHIVE_PATH)), "archive root");
+  return cachedTemplate;
+}
+
+function cloneValue(value: BplistObject, remapUid: (uid: number) => number): BplistObject {
+  if (value instanceof BplistUid || isUid(value)) return new BplistUid(remapUid(value.value));
+  if (isData(value)) return new BplistData(Buffer.from(value.value));
+  if (isReal(value)) return new BplistReal(value.value);
+  if (value instanceof Date) return new Date(value);
+  if (Array.isArray(value)) return value.map((item) => cloneValue(item, remapUid));
+  if (isDictionary(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneValue(child, remapUid)]));
+  }
+  return value;
+}
+
+function deref(objects: BplistObject[], value: BplistObject | undefined) {
+  return isUid(value) ? objects[value.value] : value;
+}
+
+function addObject(objects: BplistObject[], value: BplistObject) {
+  objects.push(value);
+  return new BplistUid(objects.length - 1);
+}
+
+function setArchivedString(objects: BplistObject[], owner: ArchiveDictionary, field: string, value: string) {
+  const current = owner[field];
+  if (!isUid(current)) {
+    owner[field] = addObject(objects, value);
+    return;
   }
 
-  uid(index: number) {
-    return new BplistUid(index);
+  const target = objects[current.value];
+  if (typeof target === "string") {
+    objects[current.value] = value;
+  } else if (isDictionary(target) && "NS.string" in target) {
+    target["NS.string"] = value;
+  } else {
+    owner[field] = addObject(objects, value);
   }
+}
 
-  set(index: number, value: ArchiveValue) {
-    this.objects[index] = value;
-    return this.uid(index);
+function setArchivedNumber(objects: BplistObject[], owner: ArchiveDictionary, field: string, value: number) {
+  owner[field] = addObject(objects, value);
+}
+
+function templateItemIndexes(objects: BplistObject[]) {
+  const root = asDictionary(objects[1], "SongSet");
+  const collection = asDictionary(deref(objects, root.songs), "SongSetItemCollection");
+  const itemArray = asDictionary(deref(objects, asDictionary(collection, "SongSetItemCollection").collection), "SongSetItem array");
+  const itemUids = asObjectArray(itemArray["NS.objects"], "SongSetItem array objects");
+  return itemUids.map((item) => {
+    if (!isUid(item)) throw new Error("Invalid OnSong template: SongSetItem array contains a non-UID.");
+    return item.value;
+  });
+}
+
+function segmentRanges(objects: BplistObject[], itemIndexes: number[]) {
+  const tailStart = objects.findIndex(
+    (object, index) => index > itemIndexes[itemIndexes.length - 1] && isDictionary(object) && object.$classname === "NSMutableArray",
+  );
+  if (tailStart < 0) throw new Error("Invalid OnSong template: could not locate class dictionary tail.");
+  return itemIndexes.map((start, index) => ({
+    start,
+    end: index + 1 < itemIndexes.length ? itemIndexes[index + 1] : tailStart,
+  }));
+}
+
+function copyRange(pending: PendingObject[], sourceObjects: BplistObject[], start: number, end: number, sharedMap: Map<number, number>, localMap?: Map<number, number>) {
+  for (let sourceIndex = start; sourceIndex < end; sourceIndex++) {
+    const newIndex = pending.length;
+    pending.push({ source: sourceObjects[sourceIndex], localMap });
+    if (localMap) localMap.set(sourceIndex, newIndex);
+    else sharedMap.set(sourceIndex, newIndex);
   }
+}
 
-  add(value: ArchiveValue) {
-    this.objects.push(value);
-    return this.uid(this.objects.length - 1);
-  }
+function buildTemplateObjects(sourceObjects: BplistObject[], songCount: number) {
+  const itemIndexes = templateItemIndexes(sourceObjects);
+  const ranges = segmentRanges(sourceObjects, itemIndexes);
+  const tailStart = ranges[ranges.length - 1].end;
+  const pending: PendingObject[] = [];
+  const sharedMap = new Map<number, number>();
+  const segmentCopies: SegmentCopy[] = [];
 
-  string(value: string | null | undefined) {
-    return value == null ? NULL : this.add(value);
-  }
+  copyRange(pending, sourceObjects, 0, ranges[0].start, sharedMap);
 
-  number(value: number | null | undefined) {
-    return value == null || Number.isNaN(value) ? NULL : this.add(value);
-  }
-
-  real(value: number | null | undefined) {
-    return value == null || Number.isNaN(value) ? NULL : this.add(new BplistReal(value));
-  }
-
-  date(value: Date) {
-    return this.add({ "NS.time": secondsSinceAppleEpoch(value), "$class": this.classRef("NSDate") });
-  }
-
-  classRef(name: ClassName): ClassRef {
-    return { kind: "classRef", name };
-  }
-
-  addClass(name: ClassName, classes: string[], classHints?: string[]) {
-    this.classIndexes.set(name, this.objects.length);
-    this.objects.push(classHints ? { "$classhints": classHints, "$classes": classes, "$classname": name } : { "$classes": classes, "$classname": name });
-  }
-
-  addClassDictionaries() {
-    this.addClass("NSDictionary", ["NSDictionary", "NSObject"]);
-    this.addClass("NSArray", ["NSArray", "NSObject"]);
-    this.addClass("NSMutableDictionary", ["NSMutableDictionary", "NSDictionary", "NSObject"]);
-    this.addClass("UIColor", ["UIColor", "NSObject"], ["NSColor"]);
-    this.addClass("NSDate", ["NSDate", "NSObject"]);
-    this.addClass("NSMutableString", ["NSMutableString", "NSString", "NSObject"]);
-    this.addClass("Song", ["Song", "OSItem", "NSObject"]);
-    this.addClass("SongSetItem", ["SongSetItem", "NSObject"]);
-    this.addClass("NSMutableArray", ["NSMutableArray", "NSArray", "NSObject"]);
-    this.addClass("SongSetItemCollection", ["SongSetItemCollection", "OSCollection", "NSObject"]);
-    this.addClass("SongSet", ["SongSet", "OSItem", "NSObject"]);
-  }
-
-  emptyDictionary() {
-    return this.add({
-      "NS.keys": [],
-      "NS.objects": [],
-      "$class": this.classRef("NSDictionary"),
-    });
-  }
-
-  emptyArray() {
-    return this.add({
-      "NS.objects": [],
-      "$class": this.classRef("NSArray"),
-    });
-  }
-
-  mutableString(value: string) {
-    return this.add({ "$class": this.classRef("NSMutableString"), "NS.string": value });
-  }
-
-  color(red: number, green: number, blue: number, alphaValue = 1) {
-    const rgb = `${red} ${green} ${blue}`;
-    return this.add({
-      UIColorComponentCount: 4,
-      UIGreen: green,
-      UIBlue: blue,
-      UIAlpha: alphaValue,
-      NSRGB: new BplistData(rgb),
-      "$class": this.classRef("UIColor"),
-      UIRed: red,
-      NSColorSpace: 2,
-    });
-  }
-
-  notesDictionary() {
-    const chords = this.emptyDictionary();
-    const stickyNotes = this.emptyArray();
-    const entries: [string, BplistUid][] = [
-      ["showNotes", this.add(true)],
-      ["performTransposition", this.add(true)],
-      ["adjustForCapo", this.add(false)],
-      ["showSectionLabels", this.add(true)],
-      ["showTablature", this.add(false)],
-      ["language", this.string("en")],
-      ["beatsPerLine", this.number(6)],
-      ["showTitle", this.add(true)],
-      ["tablatureSize", this.real(0.16665999591350555)],
-      ["showLyrics", this.add(true)],
-      ["showChords", this.add(true)],
-      ["repeatMode", this.number(1)],
-      ["showCapoedChords", this.number(0)],
-      ["chords", chords],
-      ["restrictions", this.number(0)],
-      ["chordStyle", this.number(0)],
-      ["diagramPosition", this.number(0)],
-      ["chordPosition", this.number(0)],
-      ["instrument", this.string("guitar")],
-      ["stickyNotes", stickyNotes],
-      ["zoomPointX", this.number(0)],
-      ["showMetadata", this.add(true)],
-      ["zoomPointY", this.number(0)],
-      ["zoomScale", this.number(1)],
-      ["showExpanded", this.add(true)],
-    ];
-
-    return this.add({
-      "NS.keys": entries.map(([key]) => this.string(key)),
-      "NS.objects": entries.map(([, value]) => value),
-      "$class": this.classRef("NSMutableDictionary"),
-    });
-  }
-
-  resolveClasses(value: ArchiveValue): ArchiveValue {
-    if (value && typeof value === "object" && (value as ClassRef).kind === "classRef") {
-      const index = this.classIndexes.get((value as ClassRef).name);
-      if (index == null) throw new Error(`Missing OnSong class dictionary for ${(value as ClassRef).name}.`);
-      return this.uid(index);
+  for (let songIndex = 0; songIndex < songCount; songIndex++) {
+    const templateRange = ranges[songIndex] ?? ranges[1] ?? ranges[0];
+    const localMap = new Map<number, number>();
+    copyRange(pending, sourceObjects, templateRange.start, templateRange.end, sharedMap, localMap);
+    for (const [oldIndex, newIndex] of localMap) {
+      if (!sharedMap.has(oldIndex)) sharedMap.set(oldIndex, newIndex);
     }
-    if (Array.isArray(value)) return value.map((item) => this.resolveClasses(item));
-    if (isPlainObject(value)) {
-      return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, this.resolveClasses(child)]));
-    }
-    return value;
+
+    const templateItem = asDictionary(sourceObjects[templateRange.start], "SongSetItem template");
+    const templateSong = isUid(templateItem.song) ? templateItem.song.value : null;
+    const songCopyIndex = templateSong == null ? null : localMap.get(templateSong);
+    if (songCopyIndex == null) throw new Error("Invalid OnSong template: SongSetItem does not point to a Song.");
+    segmentCopies.push({ map: localMap, itemIndex: localMap.get(templateRange.start) ?? pending.length - 1, songIndex: songCopyIndex });
   }
 
-  finish(root: BplistUid) {
-    this.addClassDictionaries();
-    const resolvedObjects = this.objects.map((object) => this.resolveClasses(object));
-    const archive = {
-      "$version": 100000,
-      "$archiver": "NSKeyedArchiver",
-      "$top": { root },
-      "$objects": resolvedObjects as never,
-    };
-    return writeBinaryPlist(archive as never);
-  }
+  copyRange(pending, sourceObjects, tailStart, sourceObjects.length, sharedMap);
+
+  const remappedObjects = pending.map(({ source, localMap }) =>
+    cloneValue(source, (uid) => localMap?.get(uid) ?? sharedMap.get(uid) ?? uid),
+  );
+
+  return { objects: remappedObjects, sharedMap, segmentCopies };
 }
 
-type SongDates = {
-  lastImportedOn: BplistUid;
-  syncTimestamp: BplistUid;
-  created: BplistUid;
-  modified: BplistUid;
-  lastPlayedOn: BplistUid;
-  viewed: BplistUid;
-};
+function updateSong(objects: BplistObject[], songObjectIndex: number, itemObjectIndex: number, song: DbSong, songIndex: number, setId: string) {
+  const songObject = asDictionary(objects[songObjectIndex], `Song ${songIndex}`);
+  const itemObject = asDictionary(objects[itemObjectIndex], `SongSetItem ${songIndex}`);
+  const title = song.title || "Untitled";
+  const artist = song.artist || "";
+  const titleSort = sortTitle(title);
+  const titleAlpha = alpha(title);
+  const songId = uuidFromSongId(song.id, songIndex + 1);
+  const content = songContent({ ...song, title, artist });
+  const itemId = JSON.stringify({ setID: setId, songID: songId, orderIndex: songIndex });
 
-function addSongDates(builder: ArchiveBuilder, performanceDate: Date): SongDates {
-  return {
-    lastImportedOn: builder.date(performanceDate),
-    syncTimestamp: builder.date(performanceDate),
-    created: builder.date(performanceDate),
-    modified: builder.date(performanceDate),
-    lastPlayedOn: builder.date(performanceDate),
-    viewed: builder.date(performanceDate),
-  };
+  setArchivedString(objects, songObject, "ID", songId);
+  setArchivedString(objects, songObject, "title", title);
+  setArchivedString(objects, songObject, "sortTitle", titleSort);
+  setArchivedString(objects, songObject, "sortTitleStripped", titleSort);
+  setArchivedString(objects, songObject, "alpha", titleAlpha);
+  setArchivedString(objects, songObject, "alphaStripped", titleAlpha);
+  setArchivedString(objects, songObject, "byline", artist);
+  setArchivedString(objects, songObject, "bylineAlpha", alpha(artist));
+  setArchivedString(objects, songObject, "content", content);
+  setArchivedString(objects, songObject, "lyrics", content);
+  setArchivedString(objects, songObject, "filepath", `${artist} - ${title}.onsong`);
+  setArchivedString(objects, songObject, "key", song.musicalKey?.trim() ?? "");
+  setArchivedString(objects, songObject, "transposedKey", song.musicalKey?.trim() ?? "");
+  songObject.tempo = NULL;
+  songObject.duration = NULL;
+
+  setArchivedString(objects, itemObject, "songID", songId);
+  setArchivedString(objects, itemObject, "setID", setId);
+  setArchivedString(objects, itemObject, "ID", itemId);
+  setArchivedNumber(objects, itemObject, "orderIndex", songIndex);
 }
 
-function songObject(builder: ArchiveBuilder, song: DbSong, songId: string, dates: SongDates) {
-  const key = song.musicalKey?.trim() || null;
-  const content = songContent(song);
-  const titleAlpha = alpha(song.title);
-  const titleSort = sortTitle(song.title);
-  return {
-    metadataFontSize: builder.real(14),
-    ID: builder.string(songId),
-    user: builder.string("Band Setlist"),
-    key: builder.string(key),
-    lastPlayedOn: dates.lastPlayedOn,
-    headerFontColor: builder.color(0, 0, 0),
-    favorite: NULL,
-    flow: NULL,
-    showMetadata: true,
-    showLyrics: true,
-    iconName: NULL,
-    favoriteColor: NULL,
-    showCapoedChords: 0,
-    created: dates.created,
-    bylineAlpha: builder.string(alpha(song.artist)),
-    zoomScale: builder.number(1),
-    fontName: builder.string("Helvetica"),
-    notes: builder.notesDictionary(),
-    title: builder.string(song.title),
-    sortTitle: builder.string(titleSort),
-    headerFontSize: builder.real(21),
-    viewed: dates.viewed,
-    chordStyle: 0,
-    copyright: NULL,
-    filepath: builder.string(`${song.artist} - ${song.title}.onsong`),
-    fontColor: builder.color(0, 0, 0),
-    ccli: NULL,
-    capo: NULL,
-    syncTimestamp: dates.syncTimestamp,
-    metadataFontName: builder.string("Helvetica"),
-    headerFontName: builder.string("Helvetica-Bold"),
-    showTablature: false,
-    monospacedFontSize: builder.real(14),
-    zoomPointX: 0,
-    diagramPosition: 0,
-    highlightOpaque: true,
-    providerName: NULL,
-    monospacedFontColor: builder.color(0, 0, 0),
-    monospacedFontName: builder.string("Courier"),
-    beatsPerLine: builder.number(6),
-    zoomPointY: 0,
-    showNotes: true,
-    tempo: NULL,
-    showTitle: true,
-    highlightColor: builder.color(1, 1, 1),
-    deleted: builder.real(0),
-    loaned: builder.real(0),
-    usefile: builder.real(0),
-    instructionsFontColor: builder.string("555555"),
-    metadataFontColor: builder.color(0, 0, 0),
-    lyrics: builder.mutableString(content),
-    timeSignature: NULL,
-    subdivision: NULL,
-    providerUri: NULL,
-    showExpanded: true,
-    hash: builder.number(Math.abs([...song.id].reduce((sum, char) => ((sum << 5) - sum + char.charCodeAt(0)) | 0, 0))),
-    showSectionLabels: true,
-    byline: builder.string(song.artist),
-    "$class": builder.classRef("Song"),
-    duration: NULL,
-    number: NULL,
-    alphaStripped: builder.string(titleAlpha),
-    chordFontColor: builder.color(0, 0, 0),
-    chordPosition: 0,
-    showChords: true,
-    lineSpacing: builder.real(1),
-    content: builder.string(content),
-    pitch: NULL,
-    chordFontSize: builder.real(14),
-    mediaID: NULL,
-    modified: dates.modified,
-    alpha: builder.string(titleAlpha),
-    imported: builder.real(1),
-    lastImportedOn: dates.lastImportedOn,
-    tablatureSize: 0.16665999591350555,
-    performTransposition: false,
-    keywords: NULL,
-    chordFontName: builder.string("Helvetica"),
-    transposedKey: builder.string(key),
-    adjustForCapo: false,
-    language: builder.string("en"),
-    instrument: builder.string("guitar"),
-    sortTitleStripped: builder.string(titleSort),
-    fontSize: builder.real(14),
-  };
+function cloneArchiveRoot(templateRoot: ArchiveDictionary, objects: BplistObject[], rootIndex: number) {
+  const archive = cloneValue(templateRoot, (uid) => uid) as ArchiveDictionary;
+  archive["$objects"] = objects;
+  const top = asDictionary(archive["$top"], "archive top");
+  top.root = new BplistUid(rootIndex);
+  return archive;
 }
 
 export function createOnSongArchive(setlist: OnSongSetlist, sets: OnSongSet[]) {
-  const builder = new ArchiveBuilder();
-  const performanceDate = setlist.performedAt ?? setlist.createdAt ?? new Date();
+  const templateRoot = templateArchive();
+  const sourceObjects = asObjectArray(templateRoot["$objects"], "template objects");
   const flatSongs = sets.flatMap((set) => set.songs);
   const title = setlist.title || [setlist.bandName, setlist.venueName].filter(Boolean).join(" - ") || "Band Setlist";
   const setId = uuidFromSongId(setlist.id, 0);
+  const { objects, sharedMap, segmentCopies } = buildTemplateObjects(sourceObjects, flatSongs.length);
 
-  const setIndex = builder.reserve();
-  const collectionIndex = builder.reserve();
-  const collectionItemClassUid = builder.string("SongSetItem");
-  const arrayIndex = builder.reserve();
-  const itemUids: BplistUid[] = [];
+  const rootIndex = sharedMap.get(1);
+  const collectionIndex = sharedMap.get(2);
+  const arrayIndex = sharedMap.get(4);
+  if (rootIndex == null || collectionIndex == null || arrayIndex == null) throw new Error("Invalid OnSong template clone.");
+
+  const root = asDictionary(objects[rootIndex], "SongSet");
+  const collection = asDictionary(objects[collectionIndex], "SongSetItemCollection");
+  const itemArray = asDictionary(objects[arrayIndex], "SongSetItem array");
+  setArchivedString(objects, root, "title", title);
+  collection.collection = new BplistUid(arrayIndex);
+  itemArray["NS.objects"] = segmentCopies.map((copy) => new BplistUid(copy.itemIndex));
 
   flatSongs.forEach((song, index) => {
-    const itemIndex = builder.reserve();
-    itemUids.push(builder.uid(itemIndex));
-    const songId = uuidFromSongId(song.id, index + 1);
-    const itemId = builder.string(JSON.stringify({ setID: setId, songID: songId, orderIndex: index }));
-    const songIndex = builder.reserve();
-    const dates = addSongDates(builder, performanceDate);
-
-    builder.set(songIndex, songObject(builder, song, songId, dates));
-    builder.set(itemIndex, {
-      songID: builder.string(songId),
-      bookID: NULL,
-      "$class": builder.classRef("SongSetItem"),
-      orderIndex: builder.number(index),
-      setID: builder.string(setId),
-      song: builder.uid(songIndex),
-      ID: itemId,
-    });
+    const copy = segmentCopies[index];
+    updateSong(objects, copy.songIndex, copy.itemIndex, song, index, setId);
   });
 
-  builder.set(arrayIndex, {
-    "NS.objects": itemUids,
-    "$class": builder.classRef("NSMutableArray"),
-  });
-  builder.set(collectionIndex, {
-    collection: builder.uid(arrayIndex),
-    "$class": builder.classRef("SongSetItemCollection"),
-    class: collectionItemClassUid,
-    index: NULL,
-  });
-  const datetime = builder.date(performanceDate);
-  builder.set(setIndex, {
-    modified: NULL,
-    playbackContinuity: builder.number(0),
-    useSeparateStyles: NULL,
-    title: builder.string(title),
-    unarchived: NULL,
-    summary: NULL,
-    "$class": builder.classRef("SongSet"),
-    songs: builder.uid(collectionIndex),
-    archived: NULL,
-    providerName: NULL,
-    sceneID: NULL,
-    orderDirection: builder.number(0),
-    datetime,
-    quantity: NULL,
-    orderMethod: builder.string("orderIndex"),
-    user: NULL,
-    providerUri: NULL,
-    expires: NULL,
-    ID: NULL,
-    hasTime: NULL,
-    created: NULL,
-    orderIndex: NULL,
-  });
-
-  return builder.finish(builder.uid(setIndex));
+  return writeBinaryPlist(cloneArchiveRoot(templateRoot, objects, rootIndex));
 }
 
 export function onSongArchiveFilename(setlist: OnSongSetlist) {
