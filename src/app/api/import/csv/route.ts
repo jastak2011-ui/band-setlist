@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import Papa from "papaparse";
 import { authErrorResponse, requireUser } from "@/lib/auth";
-import { findOrCreateSong } from "@/lib/song-import";
+import { findOrCreateSong, findOrCreateSongs, type SongImportInput } from "@/lib/song-import";
 import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 import { parseOnSongArchiveSongs } from "@/lib/onsong-import";
 
@@ -313,6 +313,7 @@ export async function POST(req: Request) {
     const errors = [...parsed.errors];
     const details: ImportDetail[] = [];
     const counts = { created: 0, matched: 0, updated: 0, duplicatesSkipped: 0, skipped: 0 };
+    const pendingOnSongImports: Array<{ row: number; input: SongImportInput; mapped: Record<string, unknown> }> = [];
 
     for (const [index, raw] of parsed.rows.entries()) {
       const mapped = parsed.format === "OnSong" ? canonicalizeOnSongRow(raw) : canonicalizeRow(raw);
@@ -347,7 +348,7 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const result = await findOrCreateSong({
+      const input: SongImportInput = {
         title: row.data.title,
         artist: row.data.artist || "Unknown Artist",
         bpm: row.data.bpm ?? null,
@@ -377,6 +378,15 @@ export async function POST(req: Request) {
         onsongUser: row.data.onsong_user ?? null,
         onsongProviderName: row.data.onsong_provider_name ?? null,
         onsongProviderUri: row.data.onsong_provider_uri ?? null,
+      };
+
+      if (parsed.format === "OnSong") {
+        pendingOnSongImports.push({ row: index + 1, input, mapped });
+        continue;
+      }
+
+      const result = await findOrCreateSong({
+        ...input,
       });
 
       ids.push(result.song.id);
@@ -400,6 +410,39 @@ export async function POST(req: Request) {
         reason: parsed.format === "OnSong" ? detailReason(result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched", linked, missing) : `${result.status} song.`,
         missingIdentityFields: missing,
       });
+    }
+
+    if (pendingOnSongImports.length > 0) {
+      let results;
+      try {
+        results = await findOrCreateSongs(pendingOnSongImports.map((item) => item.input));
+      } catch (error) {
+        return importErrorResponse("OnSong archive import failed while saving songs", error, 500);
+      }
+      for (const [index, item] of pendingOnSongImports.entries()) {
+        const result = results[index];
+        ids.push(result.song.id);
+        if (result.status === "created") counts.created += 1;
+        if (result.status === "updated") {
+          counts.matched += 1;
+          counts.updated += 1;
+        }
+        if (result.status === "matched") {
+          counts.matched += 1;
+          counts.duplicatesSkipped += 1;
+        }
+        const missing = missingIdentityFields(item.mapped);
+        const linked = Boolean(result.song.onsongSongId);
+        details.push({
+          row: item.row,
+          title: item.input.title,
+          artist: item.input.artist || "Unknown Artist",
+          status: result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched",
+          linked,
+          reason: detailReason(result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched", linked, missing),
+          missingIdentityFields: missing,
+        });
+      }
     }
 
     return NextResponse.json({

@@ -91,94 +91,110 @@ export function sameSongIdentity(a: { title: string; artist: string }, b: { titl
 }
 
 export async function findOrCreateSong(input: SongImportInput): Promise<SongImportResult> {
-  const normalizedTitle = normalizeSongIdentity(input.title);
-  const normalizedArtist = normalizeSongIdentity(input.artist);
+  return (await findOrCreateSongs([input]))[0];
+}
+
+export async function findOrCreateSongs(inputs: SongImportInput[]): Promise<SongImportResult[]> {
+  if (inputs.length === 0) return [];
 
   return transaction(async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [normalizedTitle, normalizedArtist]);
-
     const existingRows = await client.query("SELECT * FROM songs");
-    const existing = existingRows.rows.find((row) => sameSongIdentity(input, { title: row.title, artist: row.artist }));
+    const existingSongs = [...existingRows.rows];
+    const results: SongImportResult[] = [];
 
-    if (existing) {
-      const updates: string[] = [];
-      const params: unknown[] = [existing.id];
-      for (const [inputKey, column] of importFields) {
-        const incoming = input[inputKey];
-        if (hasValue(incoming) && !hasValue(existing[column])) {
-          params.push(incoming);
-          updates.push(`${column} = $${params.length}`);
+    for (const input of inputs) {
+      const normalizedTitle = normalizeSongIdentity(input.title);
+      const normalizedArtist = normalizeSongIdentity(input.artist);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [normalizedTitle, normalizedArtist]);
+
+      const existing = existingSongs.find((row) => sameSongIdentity(input, { title: row.title, artist: row.artist }));
+
+      if (existing) {
+        const updates: string[] = [];
+        const params: unknown[] = [existing.id];
+        for (const [inputKey, column] of importFields) {
+          const incoming = input[inputKey];
+          if (hasValue(incoming) && !hasValue(existing[column])) {
+            params.push(incoming);
+            updates.push(`${column} = $${params.length}`);
+          }
         }
+
+        if (updates.length > 0) {
+          const updated = await client.query(
+            `UPDATE songs SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+            params,
+          );
+          Object.assign(existing, updated.rows[0]);
+          results.push({ song: mapSong(updated.rows[0]), status: "updated" });
+          continue;
+        }
+
+        results.push({ song: mapSong(existing), status: "matched" });
+        continue;
       }
 
-      if (updates.length > 0) {
-        const updated = await client.query(
-          `UPDATE songs SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $1 RETURNING *`,
-          params,
-        );
-        return { song: mapSong(updated.rows[0]), status: "updated" };
-      }
+      const id = newId();
+      const inserted = await client.query(
+        `
+        INSERT INTO songs (
+          id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
+          crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
+          singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score,
+          singalong_score_source, peak_hour_score_source, transition_flexibility_source, audience_age_appeal_source, female_participation_score_source,
+          capo_or_tuning, avoid_after, onsong_song_id, onsong_filepath, onsong_hash, onsong_content, onsong_lyrics,
+          onsong_user, onsong_provider_name, onsong_provider_uri, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+          $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+          $31, $32, $33, $34, $35, NOW(), NOW()
+        )
+        RETURNING *
+        `,
+        [
+          id,
+          input.title.trim(),
+          input.artist.trim(),
+          input.bpm ?? null,
+          input.musicalKey ?? null,
+          input.durationSec ?? null,
+          input.energy ?? null,
+          input.notes ?? null,
+          input.genre ?? null,
+          input.vibe ?? null,
+          input.crowdScore ?? null,
+          input.danceability ?? null,
+          input.vocalDifficulty ?? null,
+          input.openerCandidate ?? null,
+          input.closerCandidate ?? null,
+          input.singalongScore ?? null,
+          input.peakHourScore ?? null,
+          input.transitionFlexibility ?? null,
+          input.audienceAgeAppeal ?? null,
+          input.femaleParticipationScore ?? null,
+          input.singalongScore == null ? null : "manual",
+          input.peakHourScore == null ? null : "manual",
+          input.transitionFlexibility == null ? null : "manual",
+          input.audienceAgeAppeal?.length ? "manual" : null,
+          input.femaleParticipationScore == null ? null : "manual",
+          input.capoOrTuning ?? null,
+          input.avoidAfter ?? null,
+          input.onsongSongId ?? null,
+          input.onsongFilepath ?? null,
+          input.onsongHash ?? null,
+          input.onsongContent ?? null,
+          input.onsongLyrics ?? null,
+          input.onsongUser ?? null,
+          input.onsongProviderName ?? null,
+          input.onsongProviderUri ?? null,
+        ],
+      );
 
-      return { song: mapSong(existing), status: "matched" };
+      existingSongs.push(inserted.rows[0]);
+      results.push({ song: mapSong(inserted.rows[0]), status: "created" });
     }
 
-    const id = newId();
-    const inserted = await client.query(
-      `
-      INSERT INTO songs (
-        id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
-        crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
-        singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score,
-        singalong_score_source, peak_hour_score_source, transition_flexibility_source, audience_age_appeal_source, female_participation_score_source,
-        capo_or_tuning, avoid_after, onsong_song_id, onsong_filepath, onsong_hash, onsong_content, onsong_lyrics,
-        onsong_user, onsong_provider_name, onsong_provider_uri, created_at, updated_at
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-        $31, $32, $33, $34, $35, NOW(), NOW()
-      )
-      RETURNING *
-      `,
-      [
-        id,
-        input.title.trim(),
-        input.artist.trim(),
-        input.bpm ?? null,
-        input.musicalKey ?? null,
-        input.durationSec ?? null,
-        input.energy ?? null,
-        input.notes ?? null,
-        input.genre ?? null,
-        input.vibe ?? null,
-        input.crowdScore ?? null,
-        input.danceability ?? null,
-        input.vocalDifficulty ?? null,
-        input.openerCandidate ?? null,
-        input.closerCandidate ?? null,
-        input.singalongScore ?? null,
-        input.peakHourScore ?? null,
-        input.transitionFlexibility ?? null,
-        input.audienceAgeAppeal ?? null,
-        input.femaleParticipationScore ?? null,
-        input.singalongScore == null ? null : "manual",
-        input.peakHourScore == null ? null : "manual",
-        input.transitionFlexibility == null ? null : "manual",
-        input.audienceAgeAppeal?.length ? "manual" : null,
-        input.femaleParticipationScore == null ? null : "manual",
-        input.capoOrTuning ?? null,
-        input.avoidAfter ?? null,
-        input.onsongSongId ?? null,
-        input.onsongFilepath ?? null,
-        input.onsongHash ?? null,
-        input.onsongContent ?? null,
-        input.onsongLyrics ?? null,
-        input.onsongUser ?? null,
-        input.onsongProviderName ?? null,
-        input.onsongProviderUri ?? null,
-      ],
-    );
-
-    return { song: mapSong(inserted.rows[0]), status: "created" };
+    return results;
   });
 }

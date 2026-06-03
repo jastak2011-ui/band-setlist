@@ -1255,7 +1255,7 @@ export default function SongsPage() {
         <div className="rounded-lg border border-[var(--border)] bg-black/10 px-3 py-3 text-sm">
           <div className="font-medium text-[var(--text)]">Import details</div>
           <div className="mt-2 space-y-2">
-            {importDetails.map((detail) => (
+            {importDetails.slice(0, 50).map((detail) => (
               <div key={`${detail.row}-${detail.title ?? "untitled"}-${detail.status}`} className="rounded border border-[var(--border)] px-3 py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -1273,6 +1273,11 @@ export default function SongsPage() {
               </div>
             ))}
           </div>
+          {importDetails.length > 50 && (
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              Showing first 50 of {importDetails.length} import detail rows. Summary counts include the full archive.
+            </p>
+          )}
         </div>
       )}
 
