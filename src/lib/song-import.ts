@@ -23,6 +23,14 @@ export type SongImportInput = {
   closerCandidate?: boolean | null;
   capoOrTuning?: string | null;
   avoidAfter?: string | null;
+  onsongSongId?: string | null;
+  onsongFilepath?: string | null;
+  onsongHash?: string | number | null;
+  onsongContent?: string | null;
+  onsongLyrics?: string | null;
+  onsongUser?: string | null;
+  onsongProviderName?: string | null;
+  onsongProviderUri?: string | null;
 };
 
 export type SongImportResult = {
@@ -50,6 +58,14 @@ const importFields = [
   ["closerCandidate", "closer_candidate"],
   ["capoOrTuning", "capo_or_tuning"],
   ["avoidAfter", "avoid_after"],
+  ["onsongSongId", "onsong_song_id"],
+  ["onsongFilepath", "onsong_filepath"],
+  ["onsongHash", "onsong_hash"],
+  ["onsongContent", "onsong_content"],
+  ["onsongLyrics", "onsong_lyrics"],
+  ["onsongUser", "onsong_user"],
+  ["onsongProviderName", "onsong_provider_name"],
+  ["onsongProviderUri", "onsong_provider_uri"],
 ] as const;
 
 export function normalizeSongIdentity(value: string) {
@@ -114,11 +130,13 @@ export async function findOrCreateSong(input: SongImportInput): Promise<SongImpo
         crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
         singalong_score, peak_hour_score, transition_flexibility, audience_age_appeal, female_participation_score,
         singalong_score_source, peak_hour_score_source, transition_flexibility_source, audience_age_appeal_source, female_participation_score_source,
-        capo_or_tuning, avoid_after, created_at, updated_at
+        capo_or_tuning, avoid_after, onsong_song_id, onsong_filepath, onsong_hash, onsong_content, onsong_lyrics,
+        onsong_user, onsong_provider_name, onsong_provider_uri, created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, NOW(), NOW()
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+        $31, $32, $33, $34, $35, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -150,6 +168,14 @@ export async function findOrCreateSong(input: SongImportInput): Promise<SongImpo
         input.femaleParticipationScore == null ? null : "manual",
         input.capoOrTuning ?? null,
         input.avoidAfter ?? null,
+        input.onsongSongId ?? null,
+        input.onsongFilepath ?? null,
+        input.onsongHash ?? null,
+        input.onsongContent ?? null,
+        input.onsongLyrics ?? null,
+        input.onsongUser ?? null,
+        input.onsongProviderName ?? null,
+        input.onsongProviderUri ?? null,
       ],
     );
 

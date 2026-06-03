@@ -35,6 +35,14 @@ const songInput = z.object({
   closerCandidate: z.boolean().optional().nullable(),
   capoOrTuning: z.string().max(120).optional().nullable(),
   avoidAfter: z.string().max(500).optional().nullable(),
+  onsongSongId: z.string().max(200).optional().nullable(),
+  onsongFilepath: z.string().max(500).optional().nullable(),
+  onsongHash: z.union([z.string().regex(/^\d+$/), z.number().int()]).optional().nullable(),
+  onsongContent: z.string().max(200000).optional().nullable(),
+  onsongLyrics: z.string().max(200000).optional().nullable(),
+  onsongUser: z.string().max(200).optional().nullable(),
+  onsongProviderName: z.string().max(200).optional().nullable(),
+  onsongProviderUri: z.string().max(1000).optional().nullable(),
 });
 
 export async function GET() {

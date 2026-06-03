@@ -34,6 +34,14 @@ const patch = z.object({
   closerCandidate: z.boolean().nullable().optional(),
   capoOrTuning: z.string().max(120).nullable().optional(),
   avoidAfter: z.string().max(500).nullable().optional(),
+  onsongSongId: z.string().max(200).nullable().optional(),
+  onsongFilepath: z.string().max(500).nullable().optional(),
+  onsongHash: z.union([z.string().regex(/^\d+$/), z.number().int()]).nullable().optional(),
+  onsongContent: z.string().max(200000).nullable().optional(),
+  onsongLyrics: z.string().max(200000).nullable().optional(),
+  onsongUser: z.string().max(200).nullable().optional(),
+  onsongProviderName: z.string().max(200).nullable().optional(),
+  onsongProviderUri: z.string().max(1000).nullable().optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -65,6 +73,14 @@ const columnMap: Record<string, string> = {
   closerCandidate: "closer_candidate",
   capoOrTuning: "capo_or_tuning",
   avoidAfter: "avoid_after",
+  onsongSongId: "onsong_song_id",
+  onsongFilepath: "onsong_filepath",
+  onsongHash: "onsong_hash",
+  onsongContent: "onsong_content",
+  onsongLyrics: "onsong_lyrics",
+  onsongUser: "onsong_user",
+  onsongProviderName: "onsong_provider_name",
+  onsongProviderUri: "onsong_provider_uri",
 };
 
 export async function PATCH(req: Request, context: Params) {

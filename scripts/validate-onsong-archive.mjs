@@ -218,6 +218,10 @@ function validateArchive(archivePath) {
         "filepath",
         "key",
         "transposedKey",
+        "hash",
+        "user",
+        "providerName",
+        "providerUri",
         "tempo",
         "duration",
       ]);

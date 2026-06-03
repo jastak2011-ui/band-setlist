@@ -53,6 +53,16 @@ function songContent(song: DbSong) {
   return lines.join("\n");
 }
 
+function generatedSongHash(song: DbSong) {
+  return Math.abs([...song.id].reduce((sum, char) => ((sum << 5) - sum + char.charCodeAt(0)) | 0, 0));
+}
+
+function preservedHash(song: DbSong) {
+  if (!song.onsongHash) return null;
+  const value = Number(song.onsongHash);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
 function isUid(value: BplistObject | undefined): value is BplistUid {
   const candidate = value as unknown as Partial<BplistUid>;
   return value instanceof BplistUid || Boolean(value && typeof value === "object" && candidate.kind === "uid" && Number.isInteger(candidate.value));
@@ -124,6 +134,11 @@ function setArchivedString(objects: BplistObject[], owner: ArchiveDictionary, fi
   } else {
     owner[field] = addObject(objects, value);
   }
+}
+
+function setArchivedNullableString(objects: BplistObject[], owner: ArchiveDictionary, field: string, value: string | null | undefined) {
+  if (value == null || value.trim() === "") owner[field] = NULL;
+  else setArchivedString(objects, owner, field, value);
 }
 
 function setArchivedNumber(objects: BplistObject[], owner: ArchiveDictionary, field: string, value: number) {
@@ -202,8 +217,11 @@ function updateSong(objects: BplistObject[], songObjectIndex: number, itemObject
   const artist = song.artist || "";
   const titleSort = sortTitle(title);
   const titleAlpha = alpha(title);
-  const songId = uuidFromSongId(song.id, songIndex + 1);
-  const content = songContent({ ...song, title, artist });
+  const songId = song.onsongSongId || uuidFromSongId(song.id, songIndex + 1);
+  const content = song.onsongContent || song.onsongLyrics || songContent({ ...song, title, artist });
+  const lyrics = song.onsongLyrics || song.onsongContent || content;
+  const filepath = song.onsongFilepath || `${artist} - ${title}.onsong`;
+  const hash = preservedHash(song) ?? generatedSongHash(song);
   const itemId = JSON.stringify({ setID: setId, songID: songId, orderIndex: songIndex });
 
   setArchivedString(objects, songObject, "ID", songId);
@@ -215,10 +233,14 @@ function updateSong(objects: BplistObject[], songObjectIndex: number, itemObject
   setArchivedString(objects, songObject, "byline", artist);
   setArchivedString(objects, songObject, "bylineAlpha", alpha(artist));
   setArchivedString(objects, songObject, "content", content);
-  setArchivedString(objects, songObject, "lyrics", content);
-  setArchivedString(objects, songObject, "filepath", `${artist} - ${title}.onsong`);
+  setArchivedString(objects, songObject, "lyrics", lyrics);
+  setArchivedString(objects, songObject, "filepath", filepath);
   setArchivedString(objects, songObject, "key", song.musicalKey?.trim() ?? "");
   setArchivedString(objects, songObject, "transposedKey", song.musicalKey?.trim() ?? "");
+  setArchivedNumber(objects, songObject, "hash", hash);
+  setArchivedString(objects, songObject, "user", song.onsongUser || "Band Setlist");
+  setArchivedNullableString(objects, songObject, "providerName", song.onsongProviderName);
+  setArchivedNullableString(objects, songObject, "providerUri", song.onsongProviderUri);
   songObject.tempo = NULL;
   songObject.duration = NULL;
 

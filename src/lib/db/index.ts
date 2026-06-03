@@ -103,6 +103,14 @@ async function bootstrapDatabase(db: Queryable) {
       closer_candidate BOOLEAN,
       capo_or_tuning TEXT,
       avoid_after TEXT,
+      onsong_song_id TEXT,
+      onsong_filepath TEXT,
+      onsong_hash BIGINT,
+      onsong_content TEXT,
+      onsong_lyrics TEXT,
+      onsong_user TEXT,
+      onsong_provider_name TEXT,
+      onsong_provider_uri TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -230,6 +238,14 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "songs", "closer_candidate", "BOOLEAN");
   await addColumnIfMissing(db, "songs", "capo_or_tuning", "TEXT");
   await addColumnIfMissing(db, "songs", "avoid_after", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_song_id", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_filepath", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_hash", "BIGINT");
+  await addColumnIfMissing(db, "songs", "onsong_content", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_lyrics", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_user", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_provider_name", "TEXT");
+  await addColumnIfMissing(db, "songs", "onsong_provider_uri", "TEXT");
   await addColumnIfMissing(db, "songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlists", "band_id", "TEXT REFERENCES bands(id) ON DELETE SET NULL");
   await addColumnIfMissing(db, "setlists", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -274,6 +290,14 @@ export type DbSong = {
   closerCandidate: boolean | null;
   capoOrTuning: string | null;
   avoidAfter: string | null;
+  onsongSongId: string | null;
+  onsongFilepath: string | null;
+  onsongHash: string | null;
+  onsongContent: string | null;
+  onsongLyrics: string | null;
+  onsongUser: string | null;
+  onsongProviderName: string | null;
+  onsongProviderUri: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -318,6 +342,14 @@ export function mapSong(row: QueryResultRow): DbSong {
     closerCandidate: row.closer_candidate,
     capoOrTuning: row.capo_or_tuning,
     avoidAfter: row.avoid_after,
+    onsongSongId: row.onsong_song_id,
+    onsongFilepath: row.onsong_filepath,
+    onsongHash: row.onsong_hash == null ? null : String(row.onsong_hash),
+    onsongContent: row.onsong_content,
+    onsongLyrics: row.onsong_lyrics,
+    onsongUser: row.onsong_user,
+    onsongProviderName: row.onsong_provider_name,
+    onsongProviderUri: row.onsong_provider_uri,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

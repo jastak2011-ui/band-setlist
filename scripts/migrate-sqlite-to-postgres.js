@@ -122,6 +122,14 @@ async function ensurePostgresSchema(client) {
       lead_singer TEXT,
       capo_or_tuning TEXT,
       avoid_after TEXT,
+      onsong_song_id TEXT,
+      onsong_filepath TEXT,
+      onsong_hash BIGINT,
+      onsong_content TEXT,
+      onsong_lyrics TEXT,
+      onsong_user TEXT,
+      onsong_provider_name TEXT,
+      onsong_provider_uri TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -173,6 +181,14 @@ async function ensurePostgresSchema(client) {
   await addPostgresColumnIfMissing(client, "songs", "lead_singer", "TEXT");
   await addPostgresColumnIfMissing(client, "songs", "capo_or_tuning", "TEXT");
   await addPostgresColumnIfMissing(client, "songs", "avoid_after", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_song_id", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_filepath", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_hash", "BIGINT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_content", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_lyrics", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_user", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_provider_name", "TEXT");
+  await addPostgresColumnIfMissing(client, "songs", "onsong_provider_uri", "TEXT");
   await addPostgresColumnIfMissing(client, "songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addPostgresColumnIfMissing(client, "setlists", "band_id", "TEXT REFERENCES bands(id) ON DELETE SET NULL");
   await addPostgresColumnIfMissing(client, "setlists", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -262,8 +278,10 @@ async function migrate() {
         `INSERT INTO songs (
            id, title, artist, bpm, musical_key, duration_sec, energy, notes, genre, vibe,
            crowd_score, danceability, vocal_difficulty, opener_candidate, closer_candidate,
-           lead_singer, capo_or_tuning, avoid_after, created_at, updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+           lead_singer, capo_or_tuning, avoid_after, onsong_song_id, onsong_filepath, onsong_hash,
+           onsong_content, onsong_lyrics, onsong_user, onsong_provider_name, onsong_provider_uri,
+           created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
          ON CONFLICT (id) DO UPDATE SET
            title = EXCLUDED.title,
            artist = EXCLUDED.artist,
@@ -282,6 +300,14 @@ async function migrate() {
            lead_singer = EXCLUDED.lead_singer,
            capo_or_tuning = EXCLUDED.capo_or_tuning,
            avoid_after = EXCLUDED.avoid_after,
+           onsong_song_id = COALESCE(songs.onsong_song_id, EXCLUDED.onsong_song_id),
+           onsong_filepath = COALESCE(songs.onsong_filepath, EXCLUDED.onsong_filepath),
+           onsong_hash = COALESCE(songs.onsong_hash, EXCLUDED.onsong_hash),
+           onsong_content = COALESCE(songs.onsong_content, EXCLUDED.onsong_content),
+           onsong_lyrics = COALESCE(songs.onsong_lyrics, EXCLUDED.onsong_lyrics),
+           onsong_user = COALESCE(songs.onsong_user, EXCLUDED.onsong_user),
+           onsong_provider_name = COALESCE(songs.onsong_provider_name, EXCLUDED.onsong_provider_name),
+           onsong_provider_uri = COALESCE(songs.onsong_provider_uri, EXCLUDED.onsong_provider_uri),
            created_at = LEAST(songs.created_at, EXCLUDED.created_at),
            updated_at = GREATEST(songs.updated_at, EXCLUDED.updated_at)
          RETURNING (xmax = 0) AS inserted`,
@@ -304,6 +330,14 @@ async function migrate() {
           optional(row, cols.songs, "lead_singer"),
           optional(row, cols.songs, "capo_or_tuning"),
           optional(row, cols.songs, "avoid_after"),
+          optional(row, cols.songs, "onsong_song_id"),
+          optional(row, cols.songs, "onsong_filepath"),
+          optional(row, cols.songs, "onsong_hash"),
+          optional(row, cols.songs, "onsong_content"),
+          optional(row, cols.songs, "onsong_lyrics"),
+          optional(row, cols.songs, "onsong_user"),
+          optional(row, cols.songs, "onsong_provider_name"),
+          optional(row, cols.songs, "onsong_provider_uri"),
           createdAt,
           updatedAt,
         ],

@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { findOrCreateSong } from "@/lib/song-import";
 import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
+import { parseOnSongArchiveSongs } from "@/lib/onsong-import";
 
 type RawImportRow = Record<string, unknown>;
 
@@ -29,6 +30,14 @@ const aliases = {
   closer_candidate: ["closer_candidate", "closer"],
   capo_or_tuning: ["capo_or_tuning", "capo", "tuning"],
   avoid_after: ["avoid_after"],
+  onsong_song_id: ["onsong_song_id", "onsong_id", "onsong_songid"],
+  onsong_filepath: ["onsong_filepath", "filepath", "onsong_file"],
+  onsong_hash: ["onsong_hash", "hash"],
+  onsong_content: ["onsong_content", "content"],
+  onsong_lyrics: ["onsong_lyrics", "lyrics"],
+  onsong_user: ["onsong_user"],
+  onsong_provider_name: ["onsong_provider_name", "provider_name"],
+  onsong_provider_uri: ["onsong_provider_uri", "provider_uri"],
 } as const;
 
 function emptyToNull(value: unknown) {
@@ -90,6 +99,14 @@ const rowSchema = z.object({
   closer_candidate: optionalBool,
   capo_or_tuning: optionalText.pipe(z.string().max(120).optional().nullable()),
   avoid_after: optionalText.pipe(z.string().max(500).optional().nullable()),
+  onsong_song_id: optionalText.pipe(z.string().max(200).optional().nullable()),
+  onsong_filepath: optionalText.pipe(z.string().max(500).optional().nullable()),
+  onsong_hash: optionalNumber.pipe(z.number().int().optional().nullable()),
+  onsong_content: optionalText.pipe(z.string().max(200000).optional().nullable()),
+  onsong_lyrics: optionalText.pipe(z.string().max(200000).optional().nullable()),
+  onsong_user: optionalText.pipe(z.string().max(200).optional().nullable()),
+  onsong_provider_name: optionalText.pipe(z.string().max(200).optional().nullable()),
+  onsong_provider_uri: optionalText.pipe(z.string().max(1000).optional().nullable()),
 });
 
 function normalizeHeader(value: string) {
@@ -128,6 +145,48 @@ function canonicalizeRow(raw: RawImportRow) {
     closer_candidate: canonicalValue(normalized, "closer_candidate"),
     capo_or_tuning: canonicalValue(normalized, "capo_or_tuning"),
     avoid_after: canonicalValue(normalized, "avoid_after"),
+    onsong_song_id: canonicalValue(normalized, "onsong_song_id"),
+    onsong_filepath: canonicalValue(normalized, "onsong_filepath"),
+    onsong_hash: canonicalValue(normalized, "onsong_hash"),
+    onsong_content: canonicalValue(normalized, "onsong_content"),
+    onsong_lyrics: canonicalValue(normalized, "onsong_lyrics"),
+    onsong_user: canonicalValue(normalized, "onsong_user"),
+    onsong_provider_name: canonicalValue(normalized, "onsong_provider_name"),
+    onsong_provider_uri: canonicalValue(normalized, "onsong_provider_uri"),
+  };
+}
+
+function canonicalizeOnSongRow(raw: RawImportRow) {
+  return {
+    title: raw.title,
+    artist: raw.artist,
+    bpm: raw.bpm,
+    key: raw.musicalKey,
+    duration_sec: raw.durationSec,
+    energy: raw.energy,
+    notes: raw.notes,
+    genre: raw.genre,
+    vibe: raw.vibe,
+    crowd_score: raw.crowdScore,
+    danceability: raw.danceability,
+    vocal_difficulty: raw.vocalDifficulty,
+    singalong_score: raw.singalongScore,
+    peak_hour_score: raw.peakHourScore,
+    transition_flexibility: raw.transitionFlexibility,
+    audience_age_appeal: raw.audienceAgeAppeal,
+    female_participation_score: raw.femaleParticipationScore,
+    opener_candidate: raw.openerCandidate,
+    closer_candidate: raw.closerCandidate,
+    capo_or_tuning: raw.capoOrTuning,
+    avoid_after: raw.avoidAfter,
+    onsong_song_id: raw.onsongSongId,
+    onsong_filepath: raw.onsongFilepath,
+    onsong_hash: raw.onsongHash,
+    onsong_content: raw.onsongContent,
+    onsong_lyrics: raw.onsongLyrics,
+    onsong_user: raw.onsongUser,
+    onsong_provider_name: raw.onsongProviderName,
+    onsong_provider_uri: raw.onsongProviderUri,
   };
 }
 
@@ -191,14 +250,16 @@ function parseImportRows(text: string) {
 export async function POST(req: Request) {
   try {
     await requireUser();
-    const text = await req.text();
-    const parsed = parseImportRows(text);
+    const body = Buffer.from(await req.arrayBuffer());
+    const parsed = body.subarray(0, 8).toString("ascii") === "bplist00"
+      ? { format: "OnSong", rows: parseOnSongArchiveSongs(body), errors: [] as string[] }
+      : parseImportRows(body.toString("utf8"));
     const ids: string[] = [];
     const errors = [...parsed.errors];
     const counts = { created: 0, matched: 0, updated: 0, duplicatesSkipped: 0, skipped: 0 };
 
     for (const [index, raw] of parsed.rows.entries()) {
-      const mapped = canonicalizeRow(raw);
+      const mapped = parsed.format === "OnSong" ? canonicalizeOnSongRow(raw) : canonicalizeRow(raw);
       if (!mapped.title || isSetMarker(mapped.title)) {
         counts.skipped += 1;
         continue;
@@ -233,6 +294,14 @@ export async function POST(req: Request) {
         closerCandidate: row.data.closer_candidate ?? null,
         capoOrTuning: row.data.capo_or_tuning ?? null,
         avoidAfter: row.data.avoid_after ?? null,
+        onsongSongId: row.data.onsong_song_id ?? null,
+        onsongFilepath: row.data.onsong_filepath ?? null,
+        onsongHash: row.data.onsong_hash ?? null,
+        onsongContent: row.data.onsong_content ?? null,
+        onsongLyrics: row.data.onsong_lyrics ?? null,
+        onsongUser: row.data.onsong_user ?? null,
+        onsongProviderName: row.data.onsong_provider_name ?? null,
+        onsongProviderUri: row.data.onsong_provider_uri ?? null,
       });
 
       ids.push(result.song.id);

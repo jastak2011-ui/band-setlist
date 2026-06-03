@@ -32,6 +32,9 @@ type Song = {
   closerCandidate: boolean | null;
   capoOrTuning: string | null;
   avoidAfter: string | null;
+  onsongSongId?: string | null;
+  onsongFilepath?: string | null;
+  onsongHash?: string | null;
   crowdResponseAverage?: number | null;
   crowdResponseCount?: number;
   crowdResponseLastRatedAt?: string | null;
@@ -786,8 +789,8 @@ export default function SongsPage() {
     if (!file) return;
     setCsvBusy(true);
     setMsg(null);
-    const text = await file.text();
-    const r = await fetch("/api/import/csv", { method: "POST", body: text });
+    const body = file.name.toLowerCase().endsWith(".archive") ? await file.arrayBuffer() : await file.text();
+    const r = await fetch("/api/import/csv", { method: "POST", body });
     const data = await r.json();
     setCsvBusy(false);
     if (!r.ok) setMsg(data.error?.join?.() ?? JSON.stringify(data));
@@ -1330,6 +1333,7 @@ export default function SongsPage() {
                       <>
                         {s.title}
                         {isDuplicate && <span className="ml-2 rounded border border-amber-500/30 px-1.5 py-0.5 text-[10px] text-amber-200">Duplicate</span>}
+                        {s.onsongSongId && <span className="ml-2 rounded border border-emerald-500/30 px-1.5 py-0.5 text-[10px] text-emerald-200">OnSong linked</span>}
                       </>
                     )}
                   </td>
