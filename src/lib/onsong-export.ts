@@ -1,4 +1,4 @@
-import { BplistData, BplistUid, writeBinaryPlist } from "@/lib/bplist";
+import { BplistData, BplistReal, BplistUid, writeBinaryPlist } from "@/lib/bplist";
 import type { DbSong, DbSetlist } from "@/lib/db";
 
 type OnSongSetlist = DbSetlist & {
@@ -64,13 +64,13 @@ class ArchiveBuilder {
     this.classIndexes.dictionary = this.addClass("NSDictionary", ["NSDictionary", "NSObject"]);
     this.classIndexes.array = this.addClass("NSArray", ["NSArray", "NSObject"]);
     this.classIndexes.mutableDictionary = this.addClass("NSMutableDictionary", ["NSMutableDictionary", "NSDictionary", "NSObject"]);
-    this.classIndexes.color = this.addClass("UIColor", ["UIColor", "NSObject"]);
+    this.classIndexes.color = this.addClass("UIColor", ["UIColor", "NSObject"], ["NSColor"]);
     this.classIndexes.date = this.addClass("NSDate", ["NSDate", "NSObject"]);
-    this.classIndexes.song = this.addClass("Song", ["Song", "NSObject"]);
+    this.classIndexes.song = this.addClass("Song", ["Song", "OSItem", "NSObject"]);
     this.classIndexes.item = this.addClass("SongSetItem", ["SongSetItem", "NSObject"]);
     this.classIndexes.mutableArray = this.addClass("NSMutableArray", ["NSMutableArray", "NSArray", "NSObject"]);
     this.classIndexes.collection = this.addClass("SongSetItemCollection", ["SongSetItemCollection", "OSCollection", "NSObject"]);
-    this.classIndexes.set = this.addClass("SongSet", ["SongSet", "NSObject"]);
+    this.classIndexes.set = this.addClass("SongSet", ["SongSet", "OSItem", "NSObject"]);
   }
 
   add(value: unknown) {
@@ -78,8 +78,8 @@ class ArchiveBuilder {
     return new BplistUid(this.objects.length - 1);
   }
 
-  addClass(classname: string, classes: string[]) {
-    this.objects.push({ "$classes": classes, "$classname": classname });
+  addClass(classname: string, classes: string[], classHints?: string[]) {
+    this.objects.push(classHints ? { "$classhints": classHints, "$classes": classes, "$classname": classname } : { "$classes": classes, "$classname": classname });
     return this.objects.length - 1;
   }
 
@@ -89,6 +89,10 @@ class ArchiveBuilder {
 
   number(value: number | null | undefined) {
     return value == null || Number.isNaN(value) ? NULL : this.add(value);
+  }
+
+  real(value: number | null | undefined) {
+    return value == null || Number.isNaN(value) ? NULL : this.add(new BplistReal(value));
   }
 
   date(value: Date) {
@@ -139,7 +143,7 @@ class ArchiveBuilder {
     const titleAlpha = alpha(song.title);
     const titleSort = sortTitle(song.title);
     return this.add({
-      metadataFontSize: this.number(14),
+      metadataFontSize: this.real(14),
       ID: this.string(songId),
       user: this.string("Band Setlist"),
       key: this.string(key),
@@ -154,12 +158,12 @@ class ArchiveBuilder {
       showCapoedChords: 0,
       created: dateUid,
       bylineAlpha: this.string(alpha(song.artist)),
-      zoomScale: this.number(1),
+      zoomScale: this.real(1),
       fontName: this.string("Helvetica"),
       notes: this.emptyMutableDictionary(),
       title: this.string(song.title),
-      sortTitle: this.mutableString(titleSort),
-      headerFontSize: this.number(21),
+      sortTitle: this.string(titleSort),
+      headerFontSize: this.real(21),
       viewed: dateUid,
       chordStyle: 0,
       copyright: NULL,
@@ -171,7 +175,7 @@ class ArchiveBuilder {
       metadataFontName: this.string("Helvetica"),
       headerFontName: this.string("Helvetica-Bold"),
       showTablature: false,
-      monospacedFontSize: this.number(14),
+      monospacedFontSize: this.real(14),
       zoomPointX: 0,
       diagramPosition: 0,
       highlightOpaque: true,
@@ -184,9 +188,9 @@ class ArchiveBuilder {
       tempo: this.number(song.bpm ?? null),
       showTitle: true,
       highlightColor: colors.highlight,
-      deleted: this.number(0),
-      loaned: this.number(0),
-      usefile: this.number(0),
+      deleted: this.real(0),
+      loaned: this.real(0),
+      usefile: this.real(0),
       instructionsFontColor: this.string("555555"),
       metadataFontColor: colors.black,
       lyrics: this.mutableString(content),
@@ -204,14 +208,14 @@ class ArchiveBuilder {
       chordFontColor: colors.black,
       chordPosition: 0,
       showChords: true,
-      lineSpacing: this.number(1),
+      lineSpacing: this.real(1),
       content: this.string(content),
       pitch: NULL,
-      chordFontSize: this.number(14),
+      chordFontSize: this.real(14),
       mediaID: NULL,
       modified: dateUid,
       alpha: this.string(titleAlpha),
-      imported: this.number(1),
+      imported: this.real(1),
       lastImportedOn: dateUid,
       tablatureSize: 0.16665999591350555,
       performTransposition: false,
@@ -222,7 +226,7 @@ class ArchiveBuilder {
       language: this.string("en"),
       instrument: this.string("guitar"),
       sortTitleStripped: this.string(titleSort),
-      fontSize: this.number(14),
+      fontSize: this.real(14),
     });
   }
 }

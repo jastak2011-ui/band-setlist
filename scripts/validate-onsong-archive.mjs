@@ -20,6 +20,8 @@ function parseBinaryPlist(buffer) {
   }
 
   const cache = new Map();
+  const objectTypes = new Map();
+  const arrayRefs = new WeakMap();
   function readLength(offset, markerLength) {
     if (markerLength < 15) return { length: markerLength, offset };
     const marker = buffer[offset];
@@ -34,29 +36,49 @@ function parseBinaryPlist(buffer) {
     const type = marker >> 4;
     const info = marker & 0x0f;
     let value;
-    if (type === 0) value = info === 0 ? null : info === 8 ? false : info === 9 ? true : { simple: info };
-    else if (type === 1) value = Number(readUIntBE(buffer, offset + 1, 1 << info));
-    else if (type === 2) value = info === 3 ? buffer.readDoubleBE(offset + 1) : buffer.readFloatBE(offset + 1);
-    else if (type === 3) value = { date: new Date((buffer.readDoubleBE(offset + 1) + 978307200) * 1000).toISOString() };
+    if (type === 0) {
+      objectTypes.set(index, info === 8 || info === 9 ? "boolean" : "null");
+      value = info === 0 ? null : info === 8 ? false : info === 9 ? true : { simple: info };
+    } else if (type === 1) {
+      objectTypes.set(index, "integer");
+      value = Number(readUIntBE(buffer, offset + 1, 1 << info));
+    } else if (type === 2) {
+      objectTypes.set(index, "real");
+      value = info === 3 ? buffer.readDoubleBE(offset + 1) : buffer.readFloatBE(offset + 1);
+    } else if (type === 3) {
+      objectTypes.set(index, "date");
+      value = { date: new Date((buffer.readDoubleBE(offset + 1) + 978307200) * 1000).toISOString() };
+    }
     else if (type === 4) {
+      objectTypes.set(index, "data");
       const data = readLength(offset + 1, info);
       value = { dataLength: data.length };
     } else if (type === 5) {
+      objectTypes.set(index, "string");
       const data = readLength(offset + 1, info);
       value = buffer.subarray(data.offset, data.offset + data.length).toString("ascii");
     } else if (type === 6) {
+      objectTypes.set(index, "string");
       const data = readLength(offset + 1, info);
       value = buffer.subarray(data.offset, data.offset + data.length * 2).swap16().toString("utf16le");
-    } else if (type === 8) value = { UID: Number(readUIntBE(buffer, offset + 1, info + 1)) };
-    else if (type === 10) {
+    } else if (type === 8) {
+      objectTypes.set(index, "uid");
+      value = { UID: Number(readUIntBE(buffer, offset + 1, info + 1)) };
+    } else if (type === 10) {
+      objectTypes.set(index, "array");
       const array = [];
       const data = readLength(offset + 1, info);
       cache.set(index, array);
+      const refs = [];
       for (let item = 0; item < data.length; item++) {
-        array.push(parseObject(Number(readUIntBE(buffer, data.offset + item * refSize, refSize))));
+        const ref = Number(readUIntBE(buffer, data.offset + item * refSize, refSize));
+        refs.push(ref);
+        array.push(parseObject(ref));
       }
+      arrayRefs.set(array, refs);
       value = array;
     } else if (type === 13) {
+      objectTypes.set(index, "dictionary");
       const dict = {};
       const data = readLength(offset + 1, info);
       cache.set(index, dict);
@@ -71,22 +93,32 @@ function parseBinaryPlist(buffer) {
     return value;
   }
 
-  return { root: parseObject(topObject), objectCount };
+  return { root: parseObject(topObject), objectCount, objectTypes, arrayRefs };
 }
 
 function uid(objects, value) {
   return value && typeof value === "object" && Number.isInteger(value.UID) ? objects[value.UID] : value;
 }
 
+function uidIndex(value) {
+  return value && typeof value === "object" && Number.isInteger(value.UID) ? value.UID : null;
+}
+
 function validateArchive(path) {
   const parsed = parseBinaryPlist(fs.readFileSync(path));
   const archive = parsed.root;
   const objects = archive.$objects;
+  const archiveObjectRefs = parsed.arrayRefs.get(objects) ?? [];
   const classNames = new Map();
+  const classDictionaries = new Map();
   objects.forEach((object, index) => {
-    if (object && typeof object === "object" && object.$classname) classNames.set(index, object.$classname);
+    if (object && typeof object === "object" && object.$classname) {
+      classNames.set(index, object.$classname);
+      classDictionaries.set(object.$classname, object);
+    }
   });
   const classFor = (object) => object && typeof object === "object" && object.$class ? classNames.get(object.$class.UID) : null;
+  const archivedObjectType = (archiveObjectIndex) => parsed.objectTypes.get(archiveObjectRefs[archiveObjectIndex]);
   const root = uid(objects, archive.$top?.root);
   const collection = uid(objects, root?.songs);
   const itemArray = uid(objects, collection?.collection);
@@ -97,16 +129,71 @@ function validateArchive(path) {
   if (classFor(root) !== "SongSet") errors.push("Root object is not SongSet.");
   if (classFor(collection) !== "SongSetItemCollection") errors.push("songs is not SongSetItemCollection.");
   if (!Array.isArray(itemArray?.["NS.objects"])) errors.push("collection does not contain NS.objects.");
+  if (items.length !== itemArray?.["NS.objects"]?.length) errors.push("SongSet item count does not match collection count.");
+
+  const songClass = classDictionaries.get("Song");
+  const songSetClass = classDictionaries.get("SongSet");
+  const colorClass = classDictionaries.get("UIColor");
+  if (!Array.isArray(songClass?.["$classes"]) || !songClass["$classes"].includes("OSItem")) errors.push("Song class does not include OSItem.");
+  if (!Array.isArray(songSetClass?.["$classes"]) || !songSetClass["$classes"].includes("OSItem")) errors.push("SongSet class does not include OSItem.");
+  if (!Array.isArray(colorClass?.["$classhints"]) || !colorClass["$classhints"].includes("NSColor")) {
+    errors.push('UIColor class does not include $classhints: ["NSColor"].');
+  }
+
+  const realDefaultFields = [
+    "fontSize",
+    "metadataFontSize",
+    "headerFontSize",
+    "chordFontSize",
+    "lineSpacing",
+    "deleted",
+    "loaned",
+    "usefile",
+    "imported",
+  ];
+  const stringSortFields = ["sortTitle", "sortTitleStripped", "alpha", "alphaStripped"];
+  const setIds = new Set();
 
   items.forEach((item, index) => {
     const song = uid(objects, item.song);
     const itemSongId = uid(objects, item.songID);
     const songId = uid(objects, song?.ID);
+    const itemSetId = uid(objects, item.setID);
+    setIds.add(itemSetId);
     if (classFor(item) !== "SongSetItem") errors.push(`Item ${index} is not SongSetItem.`);
     if (classFor(song) !== "Song") errors.push(`Item ${index} embedded song is not Song.`);
     if (itemSongId !== songId) errors.push(`Item ${index} songID does not match embedded Song ID.`);
     if (uid(objects, item.orderIndex) !== index) errors.push(`Item ${index} orderIndex mismatch.`);
+
+    const itemIdentity = uid(objects, item.ID);
+    if (typeof itemIdentity === "string") {
+      try {
+        const parsedIdentity = JSON.parse(itemIdentity);
+        if (parsedIdentity.songID !== itemSongId) errors.push(`Item ${index} ID.songID does not match songID.`);
+        if (parsedIdentity.setID !== itemSetId) errors.push(`Item ${index} ID.setID does not match setID.`);
+        if (parsedIdentity.orderIndex !== index) errors.push(`Item ${index} ID.orderIndex mismatch.`);
+      } catch {
+        errors.push(`Item ${index} ID is not valid JSON.`);
+      }
+    } else {
+      errors.push(`Item ${index} ID is not a string.`);
+    }
+
+    for (const field of realDefaultFields) {
+      const refIndex = uidIndex(song?.[field]);
+      if (refIndex == null || archivedObjectType(refIndex) !== "real") {
+        errors.push(`Song ${index} ${field} is not encoded as a real.`);
+      }
+    }
+    for (const field of stringSortFields) {
+      const refIndex = uidIndex(song?.[field]);
+      const value = uid(objects, song?.[field]);
+      if (refIndex == null || archivedObjectType(refIndex) !== "string" || typeof value !== "string") {
+        errors.push(`Song ${index} ${field} is not encoded as a plain string.`);
+      }
+    }
   });
+  if (setIds.size > 1) errors.push("SongSetItems do not share the same setID.");
 
   for (const [index, object] of objects.entries()) {
     if (object && typeof object === "object" && object.$class && !classNames.has(object.$class.UID)) {
