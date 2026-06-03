@@ -74,6 +74,13 @@ function redistributeSongs(songs: Song[], count: number) {
   return sets;
 }
 
+function filenameFromDisposition(disposition: string | null) {
+  if (!disposition) return null;
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) return decodeURIComponent(encoded);
+  return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
+}
+
 function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boolean; onSave: (score: number | null, notes: string | null) => void }) {
   const [score, setScore] = useState(song.performanceRating?.crowdResponseScore?.toString() ?? "");
   const [notes, setNotes] = useState(song.performanceRating?.notes ?? "");
@@ -146,6 +153,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [replacementPrompt, setReplacementPrompt] = useState<ReplacementPrompt | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -385,6 +393,34 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg(`Saved crowd response for ${song.title}.`);
   }
 
+  async function exportOnSong() {
+    setExportBusy(true);
+    setMsg(null);
+    const response = await fetch(`/api/setlists/${id}/onsong-export`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sets: sets.map((set) => set.songs.map((song) => song.id)) }),
+    });
+    setExportBusy(false);
+
+    if (!response.ok) {
+      setMsg("OnSong export failed.");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filenameFromDisposition(response.headers.get("Content-Disposition")) ?? "Band Setlist - OnSong.archive";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMsg("OnSong export downloaded.");
+  }
+
   function resetOrder() {
     if (!data) return;
     setSets(data.sets);
@@ -438,6 +474,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         </div>
         <div className="no-print flex flex-wrap gap-2">
           <PrintButton className="px-3 py-1 text-xs" />
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={exportBusy || songCount === 0} onClick={() => void exportOnSong()}>
+            {exportBusy ? "Exporting" : "OnSong Export"}
+          </button>
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={reshuffleAll}>
             Reshuffle all
           </button>
