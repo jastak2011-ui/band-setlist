@@ -6,7 +6,15 @@ export class BplistUid {
   }
 }
 
-type BplistObject = null | boolean | number | string | Date | BplistUid | BplistObject[] | { [key: string]: BplistObject };
+export class BplistData {
+  value: Buffer;
+
+  constructor(value: Buffer | string) {
+    this.value = typeof value === "string" ? Buffer.from(value, "ascii") : value;
+  }
+}
+
+type BplistObject = null | boolean | number | string | Date | BplistUid | BplistData | BplistObject[] | { [key: string]: BplistObject };
 
 function intSize(value: number) {
   if (value <= 0xff) return 1;
@@ -57,6 +65,10 @@ function writeDate(value: Date) {
   return buffer;
 }
 
+function writeData(value: Buffer) {
+  return Buffer.concat([lengthHeader(0x4, value.length), value]);
+}
+
 function writeUid(value: number) {
   const size = intSize(value);
   return Buffer.concat([Buffer.from([0x80 | (size - 1)]), writeUInt(value, size)]);
@@ -72,7 +84,7 @@ export function writeBinaryPlist(root: BplistObject) {
     objects.push(value);
     if (Array.isArray(value)) {
       arrayRefs.set(value, value.map(add));
-    } else if (value && !(value instanceof Date) && !(value instanceof BplistUid) && typeof value === "object") {
+    } else if (value && !(value instanceof Date) && !(value instanceof BplistUid) && !(value instanceof BplistData) && typeof value === "object") {
       dictRefs.set(value, {
         keys: Object.keys(value).map((key) => add(key)),
         values: Object.values(value).map(add),
@@ -99,6 +111,7 @@ export function writeBinaryPlist(root: BplistObject) {
     else if (typeof object === "string") buffer = writeString(object);
     else if (object instanceof Date) buffer = writeDate(object);
     else if (object instanceof BplistUid) buffer = writeUid(object.value);
+    else if (object instanceof BplistData) buffer = writeData(object.value);
     else if (Array.isArray(object)) {
       buffer = Buffer.concat([lengthHeader(0xa, object.length), ...(arrayRefs.get(object) ?? []).map(ref)]);
     } else {
