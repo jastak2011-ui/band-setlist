@@ -134,6 +134,16 @@ type BulkEnrichProgress = {
   failed: number;
 };
 
+type ImportDetail = {
+  row: number;
+  title: string | null;
+  artist: string | null;
+  status: "created" | "matched" | "updated" | "skipped";
+  linked: boolean;
+  reason: string;
+  missingIdentityFields: string[];
+};
+
 const emptyForm: SongForm = {
   title: "",
   artist: "",
@@ -226,6 +236,19 @@ function formatCrowdResponseRating(value: number | null | undefined) {
 
 function formatShortDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleDateString() : "-";
+}
+
+function importStatusLabel(detail: ImportDetail) {
+  if (detail.status === "created") return detail.linked ? "Created + OnSong Linked" : "Created";
+  if (detail.status === "updated") return detail.linked ? "Matched + OnSong Linked" : "Updated";
+  if (detail.status === "matched") return detail.linked ? "Matched + OnSong Linked" : "Matched but identity not updated";
+  return "Skipped";
+}
+
+function importStatusClass(detail: ImportDetail) {
+  if (detail.status === "skipped") return "text-rose-200";
+  if (detail.linked) return "text-emerald-200";
+  return "text-amber-200";
 }
 
 function downloadTextTemplate(filename: string, content: string, type: string) {
@@ -689,6 +712,7 @@ export default function SongsPage() {
   const [songSearch, setSongSearch] = useState("");
   const [csvBusy, setCsvBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [importDetails, setImportDetails] = useState<ImportDetail[]>([]);
   const bulkEnrichCancelRef = useRef(false);
 
   const duplicateCounts = useMemo(() => {
@@ -789,6 +813,7 @@ export default function SongsPage() {
     if (!file) return;
     setCsvBusy(true);
     setMsg(null);
+    setImportDetails([]);
     try {
       const isArchive = file.name.toLowerCase().endsWith(".archive");
       const body = isArchive ? await file.arrayBuffer() : await file.text();
@@ -802,8 +827,10 @@ export default function SongsPage() {
       const data = text ? JSON.parse(text) : null;
       if (!r.ok) {
         const error = typeof data?.error === "string" ? data.error : text || `Import failed (${r.status}).`;
+        setImportDetails(Array.isArray(data?.details) ? data.details : []);
         setMsg(error);
       } else {
+        setImportDetails(Array.isArray(data?.details) ? data.details : []);
         const errorNote = data?.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
         if (data?.format === "OnSong") {
           setMsg(`OnSong archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
@@ -1223,6 +1250,31 @@ export default function SongsPage() {
       </div>
 
       {msg && <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">{msg}</div>}
+
+      {importDetails.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-black/10 px-3 py-3 text-sm">
+          <div className="font-medium text-[var(--text)]">Import details</div>
+          <div className="mt-2 space-y-2">
+            {importDetails.map((detail) => (
+              <div key={`${detail.row}-${detail.title ?? "untitled"}-${detail.status}`} className="rounded border border-[var(--border)] px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-medium text-[var(--text)]">{detail.title || "Untitled"}</span>
+                    <span className="text-[var(--muted)]"> - {detail.artist || "Unknown Artist"}</span>
+                  </div>
+                  <span className={`text-xs font-medium ${importStatusClass(detail)}`}>{importStatusLabel(detail)}</span>
+                </div>
+                <p className="mt-1 text-xs text-[var(--muted)]">Row {detail.row}: {detail.reason}</p>
+                {detail.missingIdentityFields.length > 0 && (
+                  <p className="mt-1 text-xs text-amber-200">
+                    Missing identity fields: {detail.missingIdentityFields.join(", ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <form onSubmit={addSong} className="card space-y-3">

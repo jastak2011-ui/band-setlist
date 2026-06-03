@@ -7,6 +7,15 @@ import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
 import { parseOnSongArchiveSongs } from "@/lib/onsong-import";
 
 type RawImportRow = Record<string, unknown>;
+type ImportDetail = {
+  row: number;
+  title: string | null;
+  artist: string | null;
+  status: "created" | "matched" | "updated" | "skipped";
+  linked: boolean;
+  reason: string;
+  missingIdentityFields: string[];
+};
 
 const aliases = {
   title: ["title", "song", "song_title", "name"],
@@ -260,6 +269,31 @@ function importErrorResponse(prefix: string, error: unknown, status = 500) {
   return NextResponse.json(body, { status });
 }
 
+const identityFieldChecks = [
+  ["onsong_song_id", "onsong_song_id"],
+  ["onsong_filepath", "filepath"],
+  ["onsong_hash", "hash"],
+  ["onsong_content", "content"],
+  ["onsong_lyrics", "lyrics"],
+] as const;
+
+function hasImportValue(value: unknown) {
+  return value !== null && value !== undefined && !(typeof value === "string" && value.trim() === "");
+}
+
+function missingIdentityFields(row: Record<string, unknown>) {
+  return identityFieldChecks.filter(([field]) => !hasImportValue(row[field])).map(([, label]) => label);
+}
+
+function detailReason(status: ImportDetail["status"], linked: boolean, missing: string[]) {
+  if (status === "created") return linked ? "Created new song and stored OnSong identity." : `Created new song, but OnSong identity is incomplete: missing ${missing.join(", ")}.`;
+  if (status === "updated") return linked ? "Matched existing song and filled missing OnSong identity." : `Matched existing song, but identity is still incomplete: missing ${missing.join(", ")}.`;
+  if (status === "matched") return linked
+    ? "Matched existing song; OnSong identity was already present or no missing fields needed updates."
+    : `Matched existing song but did not become OnSong Linked because identity is incomplete: missing ${missing.join(", ")}.`;
+  return "Skipped.";
+}
+
 export async function POST(req: Request) {
   try {
     await requireUser();
@@ -276,19 +310,39 @@ export async function POST(req: Request) {
     }
     const ids: string[] = [];
     const errors = [...parsed.errors];
+    const details: ImportDetail[] = [];
     const counts = { created: 0, matched: 0, updated: 0, duplicatesSkipped: 0, skipped: 0 };
 
     for (const [index, raw] of parsed.rows.entries()) {
       const mapped = parsed.format === "OnSong" ? canonicalizeOnSongRow(raw) : canonicalizeRow(raw);
       if (!mapped.title || isSetMarker(mapped.title)) {
         counts.skipped += 1;
+        details.push({
+          row: index + 1,
+          title: typeof mapped.title === "string" && mapped.title.trim() ? mapped.title : null,
+          artist: typeof mapped.artist === "string" && mapped.artist.trim() ? mapped.artist : null,
+          status: "skipped",
+          linked: false,
+          reason: !mapped.title ? "Skipped because no song title was found." : "Skipped because this row is a set marker, not a song.",
+          missingIdentityFields: parsed.format === "OnSong" ? missingIdentityFields(mapped) : [],
+        });
         continue;
       }
 
       const row = rowSchema.safeParse(mapped);
       if (!row.success) {
         counts.skipped += 1;
-        errors.push(`Row ${index + 1}: ${row.error.issues.map((issue) => issue.message).join(", ")}`);
+        const reason = row.error.issues.map((issue) => issue.message).join(", ");
+        errors.push(`Row ${index + 1}: ${reason}`);
+        details.push({
+          row: index + 1,
+          title: typeof mapped.title === "string" && mapped.title.trim() ? mapped.title : null,
+          artist: typeof mapped.artist === "string" && mapped.artist.trim() ? mapped.artist : null,
+          status: "skipped",
+          linked: false,
+          reason,
+          missingIdentityFields: parsed.format === "OnSong" ? missingIdentityFields(mapped) : [],
+        });
         continue;
       }
 
@@ -334,6 +388,17 @@ export async function POST(req: Request) {
         counts.matched += 1;
         counts.duplicatesSkipped += 1;
       }
+      const missing = parsed.format === "OnSong" ? missingIdentityFields(mapped) : [];
+      const linked = Boolean(result.song.onsongSongId);
+      details.push({
+        row: index + 1,
+        title: row.data.title,
+        artist: row.data.artist || "Unknown Artist",
+        status: result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched",
+        linked,
+        reason: parsed.format === "OnSong" ? detailReason(result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched", linked, missing) : `${result.status} song.`,
+        missingIdentityFields: missing,
+      });
     }
 
     return NextResponse.json({
@@ -348,6 +413,7 @@ export async function POST(req: Request) {
       duplicatesSkipped: counts.duplicatesSkipped,
       skipped: counts.skipped,
       errors,
+      details,
     });
   } catch (error) {
     try {
