@@ -789,20 +789,34 @@ export default function SongsPage() {
     if (!file) return;
     setCsvBusy(true);
     setMsg(null);
-    const body = file.name.toLowerCase().endsWith(".archive") ? await file.arrayBuffer() : await file.text();
-    const r = await fetch("/api/import/csv", { method: "POST", body });
-    const data = await r.json();
-    setCsvBusy(false);
-    if (!r.ok) setMsg(data.error?.join?.() ?? JSON.stringify(data));
-    else {
-      const errorNote = data.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
-      if (data.format === "OnSong") {
-        setMsg(`OnSong archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
+    try {
+      const isArchive = file.name.toLowerCase().endsWith(".archive");
+      const body = isArchive ? await file.arrayBuffer() : await file.text();
+      const r = await fetch("/api/import/csv", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-Import-Filename": file.name },
+        body,
+      });
+      const text = await r.text();
+      const data = text ? JSON.parse(text) : null;
+      if (!r.ok) {
+        const error = typeof data?.error === "string" ? data.error : text || `Import failed (${r.status}).`;
+        setMsg(error);
       } else {
-        setMsg(`${data.format ?? "File"} import complete: ${data.created ?? 0} created, ${data.matched ?? 0} reused, ${data.updated ?? 0} updated, ${data.duplicatesSkipped ?? 0} duplicates skipped, ${data.skipped ?? 0} skipped.${errorNote}`);
+        const errorNote = data?.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
+        if (data?.format === "OnSong") {
+          setMsg(`OnSong archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
+        } else {
+          setMsg(`${data?.format ?? "File"} import complete: ${data?.created ?? 0} created, ${data?.matched ?? 0} reused, ${data?.updated ?? 0} updated, ${data?.duplicatesSkipped ?? 0} duplicates skipped, ${data?.skipped ?? 0} skipped.${errorNote}`);
+        }
+        await load();
       }
+    } catch (error) {
+      setMsg(error instanceof SyntaxError ? "Import failed: server returned an unreadable response." : error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      setCsvBusy(false);
     }
-    await load();
   }
 
   async function lookupEnrichment(song: Song, route = "/api/metadata/lookup") {

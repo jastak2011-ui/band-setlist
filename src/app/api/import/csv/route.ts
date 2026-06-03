@@ -247,13 +247,33 @@ function parseImportRows(text: string) {
   return { format: "CSV", ...parsed };
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function importErrorResponse(prefix: string, error: unknown, status = 500) {
+  const body: Record<string, unknown> = {
+    ok: false,
+    error: `${prefix}: ${errorMessage(error)}`,
+  };
+  if (process.env.NODE_ENV !== "production" && error instanceof Error && error.stack) body.stack = error.stack;
+  return NextResponse.json(body, { status });
+}
+
 export async function POST(req: Request) {
   try {
     await requireUser();
     const body = Buffer.from(await req.arrayBuffer());
-    const parsed = body.subarray(0, 8).toString("ascii") === "bplist00"
-      ? { format: "OnSong", rows: parseOnSongArchiveSongs(body), errors: [] as string[] }
-      : parseImportRows(body.toString("utf8"));
+    const filename = req.headers.get("x-import-filename") ?? "";
+    const isArchiveUpload = filename.toLowerCase().endsWith(".archive") || body.subarray(0, 8).toString("ascii") === "bplist00";
+    let parsed: { format: string; rows: RawImportRow[]; errors: string[] };
+    try {
+      parsed = isArchiveUpload
+        ? { format: "OnSong", rows: parseOnSongArchiveSongs(body), errors: [] }
+        : parseImportRows(body.toString("utf8"));
+    } catch (error) {
+      return importErrorResponse(isArchiveUpload ? "OnSong archive import failed" : "Song import failed", error, 400);
+    }
     const ids: string[] = [];
     const errors = [...parsed.errors];
     const counts = { created: 0, matched: 0, updated: 0, duplicatesSkipped: 0, skipped: 0 };
@@ -317,6 +337,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
+      ok: true,
       format: parsed.format,
       songsFound: parsed.rows.length,
       imported: ids.length,
@@ -329,6 +350,10 @@ export async function POST(req: Request) {
       errors,
     });
   } catch (error) {
-    return authErrorResponse(error);
+    try {
+      return authErrorResponse(error);
+    } catch {
+      return importErrorResponse("Song import failed", error);
+    }
   }
 }
