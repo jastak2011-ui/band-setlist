@@ -71,6 +71,7 @@ const optionalRating = optionalNumber.pipe(
   z.number().min(0).max(10).transform((value) => (value > 1 ? value / 10 : value)).optional().nullable(),
 );
 const optionalText = z.preprocess(emptyToNull, z.string().optional().nullable());
+const optionalSongText = optionalText.pipe(z.string().max(50000).optional().nullable());
 const optionalTextArray = z.preprocess((value) => {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -93,7 +94,7 @@ const rowSchema = z.object({
   key: optionalText.pipe(z.string().max(32).optional().nullable()),
   duration_sec: optionalDuration,
   energy: optionalRating,
-  notes: optionalText.pipe(z.string().max(2000).optional().nullable()),
+  notes: optionalSongText,
   genre: optionalText.pipe(z.string().max(80).optional().nullable()),
   vibe: optionalText.pipe(z.string().max(120).optional().nullable()),
   crowd_score: optionalRating,
