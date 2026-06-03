@@ -1,4 +1,5 @@
 import { releaseNotes, type ReleaseNote } from "@/lib/release-notes";
+import { OpenAiTestButton } from "./openai-test-button";
 
 const featureGroups = [
   {
@@ -67,6 +68,8 @@ export default function AboutPage() {
           ))}
         </div>
       </section>
+
+      <OpenAiTestButton />
 
       <section className="space-y-4">
         <div>
