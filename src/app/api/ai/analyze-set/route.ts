@@ -38,6 +38,14 @@ const aiAnalysisSchema = z.object({
   vocalFatigueNotes: z.array(z.string()).default([]),
   venueFitNotes: z.array(z.string()).default([]),
   songsToWatch: z.array(z.string()).default([]),
+  recommendedOrder: z.array(z.object({
+    songId: z.string().optional(),
+    setNumber: z.number().int().min(1),
+    position: z.number().int().min(1),
+    title: z.string(),
+    artist: z.string(),
+    reason: z.string(),
+  })).default([]),
 });
 
 function extractResponseText(payload: unknown) {
@@ -136,6 +144,7 @@ export async function POST(req: Request) {
           position: songIndex + 1,
           title: song.title,
           artist: song.artist,
+          songId: song.id,
           bpm: song.bpm,
           durationSec: song.durationSec,
           key: song.musicalKey,
@@ -170,7 +179,11 @@ export async function POST(req: Request) {
       songCountTotal: orderedIds.length,
       sets,
       instructions: [
-        "Analyze only. Do not reorder the setlist.",
+        "Analyze only. Recommend an alternate order, but do not claim the setlist has been changed.",
+        "Recommend a complete alternate order using only the songs provided.",
+        "Preserve the requested number of sets.",
+        "Use every provided song exactly once in recommendedOrder.",
+        "Include songId in each recommendedOrder item.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
@@ -193,7 +206,7 @@ export async function POST(req: Request) {
           },
           {
             role: "user",
-            content: `Analyze this setlist context and return JSON with exactly these fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[]. Do not include long explanations. Do not use markdown. Return only valid JSON. Keep each array to max 5 items. Keep each item under 160 characters.\n\n${JSON.stringify(context)}`,
+            content: `Analyze this setlist context and return JSON with exactly these fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array. Each recommendedOrder item must have songId, setNumber, position, title, artist, reason. Use only provided songs. Do not invent songs. Use every provided song exactly once. Preserve the selected number of sets. Consider the event preset, venue, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Do not include long explanations. Do not use markdown. Return only valid JSON. Keep each non-order array to max 5 items. Keep each item under 160 characters. Keep each recommendedOrder reason to one short sentence under 160 characters.\n\n${JSON.stringify(context)}`,
           },
         ],
         max_output_tokens: 4000,

@@ -39,7 +39,9 @@ type AiSetAnalysis = {
   vocalFatigueNotes: string[];
   venueFitNotes: string[];
   songsToWatch: string[];
+  recommendedOrder: AiRecommendedOrderItem[];
 };
+type AiRecommendedOrderItem = { songId?: string; setNumber: number; position: number; title: string; artist: string; reason: string };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
@@ -60,6 +62,10 @@ function normalizeNameForMatch(value: string) {
 
 function normalizeForMatch(value: string) {
   return normalizeNameForMatch(value);
+}
+
+function normalizeSongKey(title: string, artist: string) {
+  return `${normalizeForMatch(title)}::${normalizeForMatch(artist)}`;
 }
 
 function compactNameForMatch(value: string) {
@@ -414,7 +420,11 @@ function AnalysisScoreList({ title, rows, emptyText }: { title: string; rows: Se
   );
 }
 
-function AiSetAnalysisPanel({ analysis }: { analysis: AiSetAnalysis }) {
+function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis: AiSetAnalysis; currentSongs: BuiltSong[]; onApplyOrder: () => void }) {
+  const byId = new Map(currentSongs.map((song) => [song.id, song]));
+  const byIdentity = new Map(currentSongs.map((song) => [normalizeSongKey(song.title, song.artist), song]));
+  const recommendedBySet = [...analysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
+
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-sm">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -444,6 +454,42 @@ function AiSetAnalysisPanel({ analysis }: { analysis: AiSetAnalysis }) {
         <AiAnalysisList title="Vocal Fatigue" items={analysis.vocalFatigueNotes} emptyText="No vocal fatigue notes returned." />
         <AiAnalysisList title="Venue Fit" items={analysis.venueFitNotes} emptyText="No venue fit notes returned." />
         <AiAnalysisList title="Songs To Watch" items={analysis.songsToWatch} emptyText="No songs flagged." />
+      </div>
+
+      <div className="mt-5 rounded-lg border border-[var(--border)] px-3 py-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-medium text-[var(--accent)]">AI Recommended Order</h3>
+            <p className="mt-1 text-xs text-[var(--muted)]">Review first. Applying only reorders the visible setlist; it does not save to history.</p>
+          </div>
+          <button type="button" className="btn btn-primary px-3 py-1 text-xs" disabled={analysis.recommendedOrder.length === 0} onClick={onApplyOrder}>
+            Apply AI Order
+          </button>
+        </div>
+        {analysis.recommendedOrder.length > 0 ? (
+          <div className="space-y-4">
+            {Array.from(new Set(recommendedBySet.map((item) => item.setNumber))).map((setNumber) => (
+              <div key={setNumber}>
+                <h4 className="mb-2 text-sm font-medium text-[var(--accent)]">Set {setNumber}</h4>
+                <ol className="list-decimal space-y-1 pl-5 text-xs text-[var(--muted)]">
+                  {recommendedBySet.filter((item) => item.setNumber === setNumber).map((item) => {
+                    const song = item.songId ? byId.get(item.songId) : byIdentity.get(normalizeSongKey(item.title, item.artist));
+                    return (
+                      <li key={`${item.setNumber}-${item.position}-${item.songId ?? item.title}-${item.artist}`}>
+                        <span className="font-medium text-[var(--text)]">{item.title}</span>
+                        <span> - {item.artist}</span>
+                        {song?.bpm != null && <span className="mono"> - {song.bpm} bpm</span>}
+                        <span> - {item.reason}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--muted)]">No AI recommended order returned.</p>
+        )}
       </div>
     </div>
   );
@@ -505,6 +551,10 @@ export default function BuilderPage() {
     if (isHolidayActiveDate(performedAt)) return [];
     return songs.filter((song) => holidayOverrideIds.has(song.id) && selected.has(song.id) && isHolidayGenre(song.genre));
   }, [holidayOverrideIds, performedAt, selected, songs]);
+  const currentAnalysisSongs = useMemo(() => {
+    if (sets) return flattenSetsInOrder(sets);
+    return songs.filter((song) => selected.has(song.id)).map((song, index) => ({ ...song, position: index + 1 }));
+  }, [selected, sets, songs]);
 
   const load = useCallback(async () => {
     try {
@@ -798,6 +848,54 @@ export default function BuilderPage() {
     }
   }
 
+  function validateAiRecommendedOrder() {
+    if (!aiAnalysis) return { ok: false, problems: ["No AI recommended order is available."], sets: [] as Built[] };
+    const ordered = [...aiAnalysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
+    const sourceSongs = currentAnalysisSongs;
+    const byId = new Map(sourceSongs.map((song) => [song.id, song]));
+    const byIdentity = new Map(sourceSongs.map((song) => [normalizeSongKey(song.title, song.artist), song]));
+    const usedIds = new Set<string>();
+    const problems: string[] = [];
+    const nextSets: Built[] = Array.from({ length: numSets }, (_, index) => ({ index: index + 1, songs: [] }));
+
+    for (const item of ordered) {
+      const song = item.songId ? byId.get(item.songId) : byIdentity.get(normalizeSongKey(item.title, item.artist));
+      if (!song) {
+        problems.push(`Unknown song: ${item.title} - ${item.artist}`);
+        continue;
+      }
+      if (usedIds.has(song.id)) {
+        problems.push(`Duplicate song: ${song.title} - ${song.artist}`);
+        continue;
+      }
+      if (item.setNumber < 1 || item.setNumber > numSets) {
+        problems.push(`Invalid set number for ${song.title}: Set ${item.setNumber}`);
+        continue;
+      }
+      usedIds.add(song.id);
+      nextSets[item.setNumber - 1].songs.push({ ...song, position: nextSets[item.setNumber - 1].songs.length + 1 });
+    }
+
+    for (const song of sourceSongs) {
+      if (!usedIds.has(song.id)) problems.push(`Missing song: ${song.title} - ${song.artist}`);
+    }
+    if (usedIds.size !== sourceSongs.length) problems.push(`Expected ${sourceSongs.length} songs, but AI returned ${usedIds.size} unique matching song${usedIds.size === 1 ? "" : "s"}.`);
+
+    return { ok: problems.length === 0, problems, sets: nextSets };
+  }
+
+  function applyAiRecommendedOrder() {
+    if (!window.confirm("Apply AI recommended order? This will reorder the current setlist.")) return;
+    const validation = validateAiRecommendedOrder();
+    if (!validation.ok) {
+      setMsg(`Could not apply AI order: ${validation.problems.slice(0, 8).join("; ")}`);
+      return;
+    }
+    setSets(validation.sets);
+    setSetAnalysis(null);
+    setMsg("Applied AI recommended order. Review it before saving to history.");
+  }
+
   const saveRequirements = [
     !bandId ? "band" : null,
     !venueId ? "venue" : null,
@@ -1012,7 +1110,7 @@ export default function BuilderPage() {
               <button type="button" disabled={busy || !sets} className="btn btn-primary w-full" onClick={() => void save()}>{busy ? "Saving..." : "Save to history"}</button>
             </div>
           )}
-          {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} />}
+          {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentAnalysisSongs} onApplyOrder={applyAiRecommendedOrder} />}
         </div>
       </div>
 
