@@ -26,6 +26,20 @@ type SetAnalysis = {
   excludedHolidaySongs: Array<{ songId: string; title: string }>;
   eventType: { value: SetBuildEventType; label: string; priorities: string[] };
 };
+type AiSetAnalysis = {
+  overallRating: number;
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  recommendedMoves: string[];
+  suggestedOpener: string | null;
+  suggestedCloser: string | null;
+  suggestedSetBreak: string | null;
+  energyFlowNotes: string[];
+  vocalFatigueNotes: string[];
+  venueFitNotes: string[];
+  songsToWatch: string[];
+};
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
@@ -400,6 +414,56 @@ function AnalysisScoreList({ title, rows, emptyText }: { title: string; rows: Se
   );
 }
 
+function AiSetAnalysisPanel({ analysis }: { analysis: AiSetAnalysis }) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-sm">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-medium text-[var(--accent)]">AI Set Analysis</h2>
+          <p className="mt-1 text-[var(--muted)]">{analysis.summary}</p>
+        </div>
+        <div className="rounded-md border border-[var(--border)] px-3 py-2 text-center">
+          <div className="text-xs uppercase tracking-wide text-[var(--muted)]">Overall Rating</div>
+          <div className="mt-1 text-lg font-semibold">{analysis.overallRating}/10</div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <AiAnalysisList title="Strengths" items={analysis.strengths} emptyText="No strengths returned." />
+        <AiAnalysisList title="Concerns" items={analysis.concerns} emptyText="No concerns returned." />
+        <AiAnalysisList title="Recommended Moves" items={analysis.recommendedMoves} emptyText="No moves recommended." />
+        <div>
+          <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Suggested Opener / Closer / Set Break</h3>
+          <dl className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+            <div><dt className="inline text-[var(--text)]">Opener: </dt><dd className="inline">{analysis.suggestedOpener || "No suggestion."}</dd></div>
+            <div><dt className="inline text-[var(--text)]">Closer: </dt><dd className="inline">{analysis.suggestedCloser || "No suggestion."}</dd></div>
+            <div><dt className="inline text-[var(--text)]">Set break: </dt><dd className="inline">{analysis.suggestedSetBreak || "No suggestion."}</dd></div>
+          </dl>
+        </div>
+        <AiAnalysisList title="Energy Flow" items={analysis.energyFlowNotes} emptyText="No energy flow notes returned." />
+        <AiAnalysisList title="Vocal Fatigue" items={analysis.vocalFatigueNotes} emptyText="No vocal fatigue notes returned." />
+        <AiAnalysisList title="Venue Fit" items={analysis.venueFitNotes} emptyText="No venue fit notes returned." />
+        <AiAnalysisList title="Songs To Watch" items={analysis.songsToWatch} emptyText="No songs flagged." />
+      </div>
+    </div>
+  );
+}
+
+function AiAnalysisList({ title, items, emptyText }: { title: string; items: string[]; emptyText: string }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{title}</h3>
+      {items.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+          {items.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : (
+        <p className="mt-2 text-xs text-[var(--muted)]">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
 export default function BuilderPage() {
   const router = useRouter();
   const [songs, setSongs] = useState<Song[]>([]);
@@ -420,6 +484,8 @@ export default function BuilderPage() {
   const [saveStrongestForLater, setSaveStrongestForLater] = useState(true);
   const [sets, setSets] = useState<Built[] | null>(null);
   const [setAnalysis, setSetAnalysis] = useState<SetAnalysis | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<AiSetAnalysis | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
@@ -500,6 +566,7 @@ export default function BuilderPage() {
     setMsg(null);
     setSets(null);
     setSetAnalysis(null);
+    setAiAnalysis(null);
 
     const html = await file.text();
     const detected = parseMetadataFromFileName(file.name, bands, venues);
@@ -546,6 +613,7 @@ export default function BuilderPage() {
     setAddingImportKey(key);
     setMsg(null);
     setSetAnalysis(null);
+    setAiAnalysis(null);
 
     const response = await fetch("/api/songs", {
       method: "POST",
@@ -621,12 +689,14 @@ export default function BuilderPage() {
     setImportSummary(null);
     setSets(data.sets);
     setSetAnalysis(data.explainability ?? null);
+    setAiAnalysis(null);
   }
 
   function reshuffle() {
     if (!sets) return;
     setSets(distributeSongs(shuffleSongs(sets.flatMap((set) => set.songs)), sets.length));
     setSetAnalysis(null);
+    setAiAnalysis(null);
     setMsg("Sets reshuffled.");
   }
 
@@ -659,6 +729,7 @@ export default function BuilderPage() {
 
     let previousTitle = "song";
     setSetAnalysis(null);
+    setAiAnalysis(null);
     setSets((current) =>
       current?.map((set) =>
         set.index === setIndex
@@ -675,6 +746,56 @@ export default function BuilderPage() {
     );
     setReplacementCursor(nextCursor);
     setMsg(`Replaced ${previousTitle} with ${replacement.title}. Click Replace again to try another song in that slot.`);
+  }
+
+  function analysisSetsPayload() {
+    if (sets) {
+      return sets.map((set) => ({ index: set.index, songIds: set.songs.map((song) => song.id) }));
+    }
+    const selectedSongs = songs
+      .filter((song) => selected.has(song.id))
+      .map((song, index) => ({ ...song, position: index + 1 }));
+    return chunkSongsInOrder(selectedSongs, numSets).map((set) => ({ index: set.index, songIds: set.songs.map((song) => song.id) }));
+  }
+
+  async function analyzeSetWithAi() {
+    if (selected.size === 0 && !sets) {
+      setMsg("Select songs before asking AI to analyze the set.");
+      return;
+    }
+    setAiBusy(true);
+    setMsg("Analyzing set...");
+    try {
+      const response = await fetch("/api/ai/analyze-set", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bandId: bandId || undefined,
+          venueId: venueId || undefined,
+          bandName: selectedBand?.name,
+          venueName: selectedVenue?.name,
+          eventType,
+          performedAt,
+          numSets,
+          sets: analysisSetsPayload(),
+        }),
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) as { ok?: boolean; analysis?: AiSetAnalysis; error?: unknown } : null;
+      if (!response.ok || !data?.ok || !data.analysis) {
+        const error = typeof data?.error === "string" ? data.error : JSON.stringify(data?.error ?? `AI analysis failed (${response.status}).`);
+        setMsg(error);
+        return;
+      }
+      setAiAnalysis(data.analysis);
+      setMsg("AI Set Analysis is ready.");
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "AI analysis failed.");
+    } finally {
+      setAiBusy(false);
+    }
   }
 
   const saveRequirements = [
@@ -854,6 +975,9 @@ export default function BuilderPage() {
               )}
             </div>
             <button type="button" disabled={busy || selected.size === 0} className="btn btn-primary w-full" onClick={() => void build()}>{busy ? "Working..." : sets ? "Rebuild sets" : "Build sets"}</button>
+            <button type="button" disabled={busy || aiBusy || selected.size === 0} className="btn btn-ghost w-full" onClick={() => void analyzeSetWithAi()}>
+              {aiBusy ? "Analyzing set..." : "AI Analyze Set"}
+            </button>
           </div>
 
           {sets && (
@@ -888,6 +1012,7 @@ export default function BuilderPage() {
               <button type="button" disabled={busy || !sets} className="btn btn-primary w-full" onClick={() => void save()}>{busy ? "Saving..." : "Save to history"}</button>
             </div>
           )}
+          {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} />}
         </div>
       </div>
 
