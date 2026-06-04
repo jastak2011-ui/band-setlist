@@ -55,6 +55,13 @@ type AiSetAnalysis = {
   songsToWatch: string[];
   recommendedOrder: AiRecommendedOrderItem[];
 };
+const crowdRatingOptions = [
+  { label: "Blank", value: null },
+  { label: "Poor", value: 3 },
+  { label: "Okay", value: 5 },
+  { label: "Good", value: 7 },
+  { label: "Great", value: 10 },
+] as const;
 
 function normalizeNameForMatch(value: string) {
   return value
@@ -114,52 +121,31 @@ function filenameFromDisposition(disposition: string | null) {
   return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
 }
 
-function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boolean; onSave: (score: number | null, notes: string | null) => void }) {
-  const [score, setScore] = useState(song.performanceRating?.crowdResponseScore?.toString() ?? "");
-  const [notes, setNotes] = useState(song.performanceRating?.notes ?? "");
-
-  useEffect(() => {
-    setScore(song.performanceRating?.crowdResponseScore?.toString() ?? "");
-    setNotes(song.performanceRating?.notes ?? "");
-  }, [song.id, song.performanceRating?.crowdResponseScore, song.performanceRating?.notes]);
-
-  const parsedScore = score ? Number(score) : null;
-  const validScore = parsedScore == null || (Number.isInteger(parsedScore) && parsedScore >= 1 && parsedScore <= 10);
+function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boolean; onSave: (score: number | null) => void }) {
+  const currentScore = song.performanceRating?.crowdResponseScore ?? null;
 
   return (
     <div className="col-start-2 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="font-medium text-[var(--text)]">Crowd Response</span>
-        <input
-          className="input h-8 w-20 px-2 py-0 text-xs"
-          inputMode="numeric"
-          placeholder="1-10"
-          value={score}
-          onChange={(event) => setScore(event.target.value)}
-        />
-        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("")}>Blank</button>
-        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("3")}>Poor</button>
-        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("5")}>Okay</button>
-        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("7")}>Good</button>
-        <button type="button" className="btn btn-ghost h-8 px-2 py-0 text-xs" onClick={() => setScore("9")}>Great</button>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          className="input min-w-64 flex-1 px-2 py-1 text-xs"
-          placeholder="Performance note"
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-        />
-        <button
-          type="button"
-          className="btn btn-primary h-8 px-3 py-0 text-xs"
-          disabled={busy || !validScore}
-          onClick={() => onSave(parsedScore, notes.trim() || null)}
-        >
-          {busy ? "Saving" : "Save rating"}
-        </button>
+        <span className="font-medium text-[var(--text)]">Crowd Response</span>
+        {crowdRatingOptions.map((option) => {
+          const selected = currentScore === option.value;
+          return (
+          <button
+            key={option.label}
+            type="button"
+            className={`btn h-8 px-2 py-0 text-xs ${selected ? "btn-primary" : "btn-ghost"}`}
+            disabled={busy}
+            onClick={() => {
+              onSave(option.value);
+            }}
+          >
+            {option.label}
+          </button>
+          );
+        })}
+        {busy && <span className="text-[var(--muted)]">Saving...</span>}
       </div>
-      {!validScore && <div className="mt-1 text-rose-300">Use a whole number from 1 to 10, or leave blank.</div>}
     </div>
   );
 }
@@ -280,6 +266,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [aiBusy, setAiBusy] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<AiSetAnalysis | null>(null);
   const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
+  const [bulkRatingBusy, setBulkRatingBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -631,6 +618,52 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg(`Saved crowd response for ${song.title}.`);
   }
 
+  async function rateEntireSet(score: number | null) {
+    if (songCount === 0) return;
+    if (!window.confirm("Apply this crowd response rating to every song in this setlist?")) return;
+
+    setBulkRatingBusy(true);
+    setMsg(null);
+    const uniqueSongs = Array.from(new Map(currentSetSongs.map((song) => [song.id, song])).values());
+    try {
+      const results = await Promise.all(uniqueSongs.map(async (song) => {
+        const response = await fetch(`/api/setlists/${id}/ratings`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ songId: song.id, crowdResponseScore: score, notes: song.performanceRating?.notes ?? null }),
+        });
+        const json = await response.json().catch(() => null) as { crowdResponseScore?: number | null; notes?: string | null; updatedAt?: string | null; error?: unknown } | null;
+        if (!response.ok || !json) {
+          const error = json?.error ? JSON.stringify(json.error) : `Rating failed for ${song.title} (${response.status}).`;
+          throw new Error(error);
+        }
+        return { songId: song.id, crowdResponseScore: json.crowdResponseScore ?? null, notes: json.notes ?? null, updatedAt: json.updatedAt ?? null };
+      }));
+      const bySongId = new Map(results.map((result) => [result.songId, result]));
+      setSets((current) =>
+        current.map((set) => ({
+          ...set,
+          songs: set.songs.map((song) => {
+            const rating = bySongId.get(song.id);
+            return rating ? {
+              ...song,
+              performanceRating: {
+                crowdResponseScore: rating.crowdResponseScore,
+                notes: rating.notes,
+                updatedAt: rating.updatedAt,
+              },
+            } : song;
+          }),
+        })),
+      );
+      setMsg("Applied crowd response rating to the full setlist.");
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Could not rate the full setlist.");
+    } finally {
+      setBulkRatingBusy(false);
+    }
+  }
+
   async function exportOnSong() {
     setExportBusy(true);
     setMsg(null);
@@ -734,6 +767,24 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       {msg && <div className="no-print rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">{msg}</div>}
 
       {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentSetSongs} onApplyOrder={() => void applyAiRecommendedOrder()} />}
+
+      <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium text-[var(--text)]">Rate Entire Set</span>
+          {crowdRatingOptions.map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              className="btn btn-ghost h-8 px-2 py-0 text-xs"
+              disabled={bulkRatingBusy || songCount === 0}
+              onClick={() => void rateEntireSet(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+          {bulkRatingBusy && <span className="text-[var(--muted)]">Saving...</span>}
+        </div>
+      </div>
 
       {sets.map((s) => {
         const setDuration = totalDuration(s.songs);
@@ -846,7 +897,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                   <SongPerformanceRating
                     song={song}
                     busy={ratingBusyKey === `${s.index}-${song.id}-${songIndex}`}
-                    onSave={(score, notes) => void saveRating(s.index, songIndex, song, score, notes)}
+                    onSave={(score) => void saveRating(s.index, songIndex, song, score, song.performanceRating?.notes ?? null)}
                   />
                 </li>
               );

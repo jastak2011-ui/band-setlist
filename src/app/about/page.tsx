@@ -1,5 +1,4 @@
 import { releaseNotes, type ReleaseNote } from "@/lib/release-notes";
-import { OpenAiTestButton } from "./openai-test-button";
 
 const featureGroups = [
   {
@@ -88,14 +87,6 @@ export default function AboutPage() {
         <div className="space-y-3">
           {releaseNotes.map((release) => <ReleaseCard key={release.version} release={release} />)}
         </div>
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-xl font-semibold">Admin / Debug</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">Utilities for checking deployed service configuration.</p>
-        </div>
-        <OpenAiTestButton />
       </section>
     </div>
   );
