@@ -3,16 +3,25 @@ import { OpenAiTestButton } from "./openai-test-button";
 
 const featureGroups = [
   {
-    title: "Plan shows",
-    items: ["Manage songs, bands, venues, and saved set history.", "Build sets for bar crowds, breweries, private parties, weddings, and corporate events."],
+    title: "Build smarter sets",
+    items: [
+      "AI-powered Set Builder with venue-aware recommendations, set analysis, and intelligent song sequencing.",
+      "AI Recommended Order with Apply AI Order support in both Set Builder and Set History.",
+    ],
   },
   {
-    title: "Enrich the library",
-    items: ["Look up BPM, duration, canonical metadata, tags, genre, vibe, and smart builder fields.", "Use bulk enrichment while preserving manual overrides."],
+    title: "Preserve the library",
+    items: [
+      "Song library with CSV, HTML, and OnSong archive imports.",
+      "Full OnSong .archive import/export with round-trip song identity preservation.",
+    ],
   },
   {
-    title: "Learn over time",
-    items: ["Track venue history and avoid stale repeat sets.", "Rate real post-gig crowd response by song performance.", "Use crowd response history in future recommendations."],
+    title: "Learn from shows",
+    items: [
+      "Post-gig crowd response ratings by song, venue, band, and performance date.",
+      "Venue-aware recommendations with scoring details and crowd-response history.",
+    ],
   },
 ];
 
@@ -24,7 +33,7 @@ export default function AboutPage() {
         <div className="max-w-3xl space-y-3">
           <h1 className="text-3xl font-semibold tracking-tight">Band Setlist</h1>
           <p className="text-sm leading-6 text-[var(--muted)]">
-            Band Setlist helps bands manage songs, build smarter setlists, track venue history, enrich song metadata, and learn from real crowd response over time.
+            Band Setlist helps working bands manage their song library, build smarter venue-specific setlists, analyze performance flow with AI, preserve OnSong compatibility, and learn from real crowd response over time.
           </p>
         </div>
       </section>
@@ -53,14 +62,16 @@ export default function AboutPage() {
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           {[
-            "Song library with CSV and HTML imports",
-            "Bands, venues, saved set history, and reports",
+            "AI-powered Set Builder with venue-aware recommendations, set analysis, and intelligent song sequencing",
+            "AI Recommended Order with Apply AI Order support in both Set Builder and Set History",
+            "Full OnSong .archive import/export with round-trip song identity preservation",
+            "Song library with CSV, HTML, and OnSong archive imports",
             "Metadata enrichment with Deezer, MusicBrainz, Last.fm, and local library matching",
-            "Smart Set Builder with event presets and Set Analysis",
-            "Venue-aware recommendations with scoring details",
+            "Venue-aware recommendations with scoring details and crowd-response history",
+            "Post-gig crowd response ratings by song, venue, band, and performance date",
+            "Smart Builder metadata including singalong, danceability, energy, peak-hour, female participation, and audience age appeal",
             "Holiday seasonality controls using the existing Genre field",
-            "History print/PDF layout with drummer-friendly BPM display",
-            "Post-gig crowd response ratings and reporting",
+            "Clean print/PDF layouts with Song, Artist, BPM, and set duration",
           ].map((feature) => (
             <div key={feature} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--muted)]">
               {feature}
@@ -68,8 +79,6 @@ export default function AboutPage() {
           ))}
         </div>
       </section>
-
-      <OpenAiTestButton />
 
       <section className="space-y-4">
         <div>
@@ -79,6 +88,14 @@ export default function AboutPage() {
         <div className="space-y-3">
           {releaseNotes.map((release) => <ReleaseCard key={release.version} release={release} />)}
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-xl font-semibold">Admin / Debug</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">Utilities for checking deployed service configuration.</p>
+        </div>
+        <OpenAiTestButton />
       </section>
     </div>
   );

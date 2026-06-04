@@ -42,8 +42,8 @@ export function OpenAiTestButton() {
     <div className="card">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-medium text-[var(--accent)]">OpenAI Connection</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">Temporary check for the deployed Render API key before AI Set Analysis is built.</p>
+          <h2 className="font-medium text-[var(--accent)]">OpenAI Connection Debug</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">Admin utility for verifying the deployed Render OpenAI API key.</p>
         </div>
         <button type="button" className="btn btn-primary" disabled={state.status === "testing"} onClick={() => void testConnection()}>
           {state.status === "testing" ? "Testing..." : "Test OpenAI Connection"}
