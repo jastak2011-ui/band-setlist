@@ -11,6 +11,7 @@ const MAX_NOTE_LENGTH = 240;
 const eventType = z.enum(["bar-crowd", "brewery", "private-party", "wedding", "corporate-event"]);
 
 const bodySchema = z.object({
+  setlistId: z.string().optional(),
   bandId: z.string().optional(),
   venueId: z.string().optional(),
   bandName: z.string().optional(),
@@ -171,6 +172,7 @@ export async function POST(req: Request) {
     const context = {
       bandName,
       venueName,
+      setlistId: input.setlistId ?? null,
       buildSetFor: input.eventType ?? "bar-crowd",
       performanceDate: formatDate(input.performedAt),
       numberOfSets: input.numSets,
