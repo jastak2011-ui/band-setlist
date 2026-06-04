@@ -185,17 +185,18 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: MODEL,
+        reasoning: { effort: "low" },
         input: [
           {
             role: "system",
-            content: "You are a practical live music setlist analyst. Return concise JSON only.",
+            content: "You are a practical live music setlist analyst. Return only valid concise JSON. Do not use markdown.",
           },
           {
             role: "user",
-            content: `Analyze this setlist context and return JSON with exactly these fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[].\n\n${JSON.stringify(context)}`,
+            content: `Analyze this setlist context and return JSON with exactly these fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[]. Do not include long explanations. Do not use markdown. Return only valid JSON. Keep each array to max 5 items. Keep each item under 160 characters.\n\n${JSON.stringify(context)}`,
           },
         ],
-        max_output_tokens: 1200,
+        max_output_tokens: 4000,
       }),
     });
 
@@ -220,6 +221,16 @@ export async function POST(req: Request) {
           ? (payload as { error?: { message?: string } }).error?.message
           : null;
       return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) }, { status: response.status });
+    }
+
+    if (payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {
+      const incompleteDetails = (payload as { incomplete_details?: { reason?: unknown } }).incomplete_details;
+      return privateJson({
+        ok: false,
+        error: "AI analysis was cut off before completion. Try fewer songs or run again.",
+        incompleteReason: typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : null,
+        debugRawResponse: rawDebugSnippet(payload),
+      }, { status: 502 });
     }
 
     const text = extractResponseText(payload);
