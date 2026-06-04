@@ -60,6 +60,14 @@ function extractResponseText(payload: unknown) {
     .trim();
 }
 
+function rawDebugSnippet(payload: unknown) {
+  try {
+    return JSON.stringify(payload, null, 2).slice(0, 1000);
+  } catch {
+    return String(payload).slice(0, 1000);
+  }
+}
+
 function parseJsonText(text: string) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -192,27 +200,41 @@ export async function POST(req: Request) {
     });
 
     const payload = await response.json().catch(() => null);
+    console.info("OpenAI analyze-set raw response", payload);
+    console.info("OpenAI analyze-set response.output", payload && typeof payload === "object" ? (payload as { output?: unknown }).output : undefined);
+    console.info("OpenAI analyze-set response.output_text", payload && typeof payload === "object" ? (payload as { output_text?: unknown }).output_text : undefined);
+    if (payload && typeof payload === "object") {
+      const output = (payload as { output?: unknown }).output;
+      if (Array.isArray(output)) {
+        const contentBlocks = output.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const content = (item as { content?: unknown }).content;
+          return Array.isArray(content) ? content : [];
+        });
+        console.info("OpenAI analyze-set content blocks", contentBlocks);
+      }
+    }
     if (!response.ok) {
       const error =
         payload && typeof payload === "object" && "error" in payload
           ? (payload as { error?: { message?: string } }).error?.message
           : null;
-      return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})` }, { status: response.status });
+      return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) }, { status: response.status });
     }
 
     const text = extractResponseText(payload);
-    if (!text) return privateJson({ ok: false, error: "OpenAI returned an empty analysis." }, { status: 502 });
+    if (!text) return privateJson({ ok: false, error: "OpenAI returned an empty analysis.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
 
     let analysis: unknown;
     try {
       analysis = parseJsonText(text);
     } catch {
-      return privateJson({ ok: false, error: "OpenAI returned analysis that was not valid JSON." }, { status: 502 });
+      return privateJson({ ok: false, error: "OpenAI returned analysis that was not valid JSON.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
     }
 
     const validated = aiAnalysisSchema.safeParse(analysis);
     if (!validated.success) {
-      return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format." }, { status: 502 });
+      return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
     }
 
     return privateJson({ ok: true, analysis: validated.data });
