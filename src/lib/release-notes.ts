@@ -10,6 +10,39 @@ export type ReleaseNote = {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "2026.11",
+    date: "June 3, 2026",
+    title: "AI Set Analysis & OnSong Integration",
+    additions: [
+      "OpenAI-powered set analysis for venue fit, energy flow, vocal fatigue, crowd familiarity, pacing, and set structure.",
+      "AI feedback covering strengths, concerns, recommended moves, songs to watch, opener suggestions, closer suggestions, and set break recommendations.",
+      "AI Recommended Order with complete song sequencing that respects the selected number of sets.",
+      "Placement reasoning for every AI-recommended song order item.",
+      "One-click Apply AI Order in both Set Builder and Set History.",
+      "AI analysis and reorder support for previously saved Set History setlists.",
+      "OnSong .archive import and export support.",
+      "Preserved OnSong identity fields for round-trip compatibility and better linking with existing library entries.",
+    ],
+    changes: [
+      "AI sequencing uses venue profile, song metadata, BPM, familiarity, singalong potential, vocal demand, and set context.",
+      "Applying AI order validates duplicate songs, missing songs, and set integrity before reordering.",
+      "Set History AI order changes save directly to the existing setlist without creating duplicates.",
+      "Large OnSong libraries now import more reliably with improved processing performance.",
+      "Print and Save PDF output now focuses on song number, title, artist, and BPM.",
+    ],
+    fixes: [
+      "Improved OpenAI API handling for incomplete responses.",
+      "Improved OnSong archive import/export reliability.",
+      "Added detailed import diagnostics and per-song import status reporting.",
+      "Increased support for large note and content fields during import.",
+      "Removed large notes, lyric content, chord charts, and imported archive text from printed setlists.",
+    ],
+    notes: [
+      "AI Set Analysis does not automatically save changes; users choose when to apply or save recommendations.",
+      "OnSong import/export does not modify song metadata, crowd response ratings, or OnSong identity fields unless importing identity data.",
+    ],
+  },
+  {
     version: "2026.10",
     date: "May 31, 2026",
     title: "Post-gig crowd response intelligence",
