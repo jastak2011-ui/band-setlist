@@ -38,6 +38,10 @@ type ReplacementPrompt = {
   songIndex: number;
   mode: "choices" | "list";
 };
+type DragLocation = {
+  setIndex: number;
+  songIndex: number;
+};
 type Detail = {
   setlist: {
     title: string | null;
@@ -138,7 +142,7 @@ function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boole
   const currentScore = song.performanceRating?.crowdResponseScore ?? null;
 
   return (
-    <div className="col-start-2 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
+    <div className="col-start-3 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-[var(--text)]">Crowd Response</span>
         {crowdRatingOptions.map((option) => {
@@ -288,6 +292,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [aiAnalysis, setAiAnalysis] = useState<AiSetAnalysis | null>(null);
   const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
   const [bulkRatingBusy, setBulkRatingBusy] = useState(false);
+  const [draggedSong, setDraggedSong] = useState<DragLocation | null>(null);
+  const [dragOverSong, setDragOverSong] = useState<DragLocation | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -474,6 +480,40 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setDirty(true);
     setAiAnalysis(null);
     setMsg(null);
+  }
+
+  function moveDraggedSong(source: DragLocation, target: DragLocation | { setIndex: number; songIndex: "end" }) {
+    setSets((current) => {
+      const next = current.map((set) => ({ ...set, songs: [...set.songs] }));
+      const sourceSet = next.find((set) => set.index === source.setIndex);
+      const targetSet = next.find((set) => set.index === target.setIndex);
+      if (!sourceSet || !targetSet) return current;
+      const [song] = sourceSet.songs.splice(source.songIndex, 1);
+      if (!song) return current;
+
+      let insertIndex = target.songIndex === "end" ? targetSet.songs.length : target.songIndex;
+      if (source.setIndex === target.setIndex && target.songIndex !== "end" && source.songIndex < target.songIndex) {
+        insertIndex -= 1;
+      }
+      targetSet.songs.splice(Math.max(0, insertIndex), 0, song);
+      return next;
+    });
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setMsg("Song moved by drag. Save the setlist when it feels right.");
+  }
+
+  function handleDrop(target: DragLocation | { setIndex: number; songIndex: "end" }) {
+    if (!draggedSong) return;
+    if (target.songIndex !== "end" && draggedSong.setIndex === target.setIndex && draggedSong.songIndex === target.songIndex) {
+      setDraggedSong(null);
+      setDragOverSong(null);
+      return;
+    }
+    moveDraggedSong(draggedSong, target);
+    setDraggedSong(null);
+    setDragOverSong(null);
   }
 
   async function saveOrder() {
@@ -842,14 +882,63 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               Reshuffle set
             </button>
           </div>
-          <ol className="no-print space-y-1 text-sm">
+          <ol
+            className={`no-print space-y-1 rounded-lg text-sm ${draggedSong ? "border border-dashed border-[var(--border)] p-1" : ""}`}
+            onDragOver={(event) => {
+              if (!draggedSong) return;
+              event.preventDefault();
+            }}
+            onDrop={(event) => {
+              if (!draggedSong) return;
+              event.preventDefault();
+              handleDrop({ setIndex: s.index, songIndex: "end" });
+            }}
+          >
             {s.songs.map((song, songIndex) => {
               const usedIds = new Set(sets.flatMap((set) => set.songs.map((item) => item.id)));
               const promptIsOpen = replacementPrompt?.setIndex === s.index && replacementPrompt.songIndex === songIndex;
               const promptIsList = promptIsOpen && replacementPrompt.mode === "list";
+              const isDragging = draggedSong?.setIndex === s.index && draggedSong.songIndex === songIndex;
+              const isDropTarget = dragOverSong?.setIndex === s.index && dragOverSong.songIndex === songIndex;
               return (
-                <li key={`${s.index}-${song.id}-${songIndex}`} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg px-2 py-1 hover:bg-[#0f131a]">
+                <li
+                  key={`${s.index}-${song.id}-${songIndex}`}
+                  className={`grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 rounded-lg px-2 py-1 transition hover:bg-[#0f131a] ${isDragging ? "opacity-50 ring-1 ring-[var(--accent)]" : ""} ${isDropTarget ? "border-t-2 border-[var(--accent)] bg-[#0f131a]" : ""}`}
+                  onDragOver={(event) => {
+                    if (!draggedSong) return;
+                    event.preventDefault();
+                    setDragOverSong({ setIndex: s.index, songIndex });
+                  }}
+                  onDragLeave={() => {
+                    setDragOverSong((current) => current?.setIndex === s.index && current.songIndex === songIndex ? null : current);
+                  }}
+                  onDrop={(event) => {
+                    if (!draggedSong) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleDrop({ setIndex: s.index, songIndex });
+                  }}
+                >
                   <span className="mono text-xs text-[var(--muted)]">{songIndex + 1}</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    className="cursor-grab select-none rounded border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)] active:cursor-grabbing"
+                    title="Drag to reorder"
+                    aria-label={`Drag ${song.title} to reorder`}
+                    onDragStart={(event) => {
+                      setDraggedSong({ setIndex: s.index, songIndex });
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", `${s.index}:${songIndex}`);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedSong(null);
+                      setDragOverSong(null);
+                    }}
+                  >
+                    ::
+                  </span>
                   <span>
                     {song.title} <span className="text-[var(--muted)]">- {song.artist}</span>
                     {song.bpm != null && <span className="mono text-xs text-[var(--muted)]"> ({song.bpm} bpm)</span>}
@@ -901,7 +990,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                     </button>
                   </span>
                   {promptIsOpen && (
-                    <div className="col-start-2 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
+                    <div className="col-start-3 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
                       <button
                         type="button"
                         className="btn btn-primary h-8 px-3 py-0 text-xs"
