@@ -13,6 +13,17 @@ type Song = {
   bpm: number | null;
   musicalKey: string | null;
   durationSec?: number | null;
+  genre?: string | null;
+  energy?: number | null;
+  crowdScore?: number | null;
+  danceability?: number | null;
+  vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  femaleParticipationScore?: number | null;
+  openerCandidate?: boolean | null;
+  closerCandidate?: boolean | null;
   notes?: string | null;
   capoOrTuning?: string | null;
   performanceRating?: {
@@ -54,6 +65,8 @@ type AiSetAnalysis = {
   venueFitNotes: string[];
   songsToWatch: string[];
   recommendedOrder: AiRecommendedOrderItem[];
+  recommendedOrderWarning?: string | null;
+  recommendedOrderProblems?: string[];
 };
 const crowdRatingOptions = [
   { label: "Blank", value: null },
@@ -196,6 +209,14 @@ function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis
             Apply AI Order
           </button>
         </div>
+        {analysis.recommendedOrderWarning && (
+          <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            {analysis.recommendedOrderWarning}
+            {analysis.recommendedOrderProblems && analysis.recommendedOrderProblems.length > 0 && (
+              <div className="mt-1 text-[var(--muted)]">{analysis.recommendedOrderProblems.slice(0, 6).join("; ")}</div>
+            )}
+          </div>
+        )}
         {analysis.recommendedOrder.length > 0 ? (
           <div className="space-y-4">
             {Array.from(new Set(recommendedBySet.map((item) => item.setNumber))).map((setNumber) => (
@@ -502,7 +523,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           venueName: data.setlist.venueName ?? undefined,
           performedAt: data.setlist.performedAt ?? undefined,
           numSets: sets.length,
-          sets: sets.map((set) => ({ index: set.index, songIds: set.songs.map((song) => song.id) })),
+          sets: sets.map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) })),
         }),
       });
       const text = await response.text();
@@ -519,6 +540,31 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     } finally {
       setAiBusy(false);
     }
+  }
+
+  function compactSongForAi(song: Song, setNumber: number, position: number) {
+    return {
+      songId: song.id,
+      setNumber,
+      position,
+      title: song.title,
+      artist: song.artist,
+      bpm: song.bpm ?? null,
+      duration: song.durationSec ?? null,
+      key: song.musicalKey ?? null,
+      genre: song.genre ?? null,
+      energy: song.energy ?? null,
+      singalongScore: song.singalongScore ?? null,
+      danceability: song.danceability ?? null,
+      crowdFamiliarity: song.crowdScore ?? null,
+      femaleParticipationScore: song.femaleParticipationScore ?? null,
+      peakHourScore: song.peakHourScore ?? null,
+      transitionFlexibility: song.transitionFlexibility ?? null,
+      vocalDifficulty: song.vocalDifficulty ?? null,
+      openerCandidate: song.openerCandidate ?? null,
+      closerCandidate: song.closerCandidate ?? null,
+      crowdResponseScore: song.performanceRating?.crowdResponseScore ?? null,
+    };
   }
 
   function validateAiRecommendedOrder() {

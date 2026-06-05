@@ -5,7 +5,25 @@ import { useRouter } from "next/navigation";
 import { readArrayResponse, readObjectResponse } from "@/app/client-fetch";
 import { isHolidayActiveDate, isHolidayGenre } from "@/lib/seasonality";
 
-type Song = { id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre: string | null };
+type Song = {
+  id: string;
+  title: string;
+  artist: string;
+  bpm: number | null;
+  durationSec: number | null;
+  musicalKey?: string | null;
+  genre: string | null;
+  energy?: number | null;
+  crowdScore?: number | null;
+  danceability?: number | null;
+  vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  femaleParticipationScore?: number | null;
+  openerCandidate?: boolean | null;
+  closerCandidate?: boolean | null;
+};
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
 type Band = { id: string; name: string };
@@ -40,6 +58,8 @@ type AiSetAnalysis = {
   venueFitNotes: string[];
   songsToWatch: string[];
   recommendedOrder: AiRecommendedOrderItem[];
+  recommendedOrderWarning?: string | null;
+  recommendedOrderProblems?: string[];
 };
 type AiRecommendedOrderItem = { songId?: string; setNumber: number; position: number; title: string; artist: string; reason: string };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
@@ -466,6 +486,14 @@ function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis
             Apply AI Order
           </button>
         </div>
+        {analysis.recommendedOrderWarning && (
+          <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            {analysis.recommendedOrderWarning}
+            {analysis.recommendedOrderProblems && analysis.recommendedOrderProblems.length > 0 && (
+              <div className="mt-1 text-[var(--muted)]">{analysis.recommendedOrderProblems.slice(0, 6).join("; ")}</div>
+            )}
+          </div>
+        )}
         {analysis.recommendedOrder.length > 0 ? (
           <div className="space-y-4">
             {Array.from(new Set(recommendedBySet.map((item) => item.setNumber))).map((setNumber) => (
@@ -798,14 +826,39 @@ export default function BuilderPage() {
     setMsg(`Replaced ${previousTitle} with ${replacement.title}. Click Replace again to try another song in that slot.`);
   }
 
+  function compactSongForAi(song: Partial<Song> & { id: string; title: string; artist: string }, setNumber: number, position: number) {
+    return {
+      songId: song.id,
+      setNumber,
+      position,
+      title: song.title,
+      artist: song.artist,
+      bpm: song.bpm ?? null,
+      duration: song.durationSec ?? null,
+      key: song.musicalKey ?? null,
+      genre: song.genre ?? null,
+      energy: song.energy ?? null,
+      singalongScore: song.singalongScore ?? null,
+      danceability: song.danceability ?? null,
+      crowdFamiliarity: song.crowdScore ?? null,
+      femaleParticipationScore: song.femaleParticipationScore ?? null,
+      peakHourScore: song.peakHourScore ?? null,
+      transitionFlexibility: song.transitionFlexibility ?? null,
+      vocalDifficulty: song.vocalDifficulty ?? null,
+      openerCandidate: song.openerCandidate ?? null,
+      closerCandidate: song.closerCandidate ?? null,
+      crowdResponseScore: null,
+    };
+  }
+
   function analysisSetsPayload() {
     if (sets) {
-      return sets.map((set) => ({ index: set.index, songIds: set.songs.map((song) => song.id) }));
+      return sets.map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) }));
     }
     const selectedSongs = songs
       .filter((song) => selected.has(song.id))
       .map((song, index) => ({ ...song, position: index + 1 }));
-    return chunkSongsInOrder(selectedSongs, numSets).map((set) => ({ index: set.index, songIds: set.songs.map((song) => song.id) }));
+    return chunkSongsInOrder(selectedSongs, numSets).map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) }));
   }
 
   async function analyzeSetWithAi() {

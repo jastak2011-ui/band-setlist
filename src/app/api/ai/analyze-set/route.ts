@@ -6,9 +6,30 @@ import { getCrowdResponseStats } from "@/lib/recommendations";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const MODEL = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-nano";
 const MAX_ANALYSIS_SONGS = 160;
-const MAX_NOTE_LENGTH = 240;
 
 const eventType = z.enum(["bar-crowd", "brewery", "private-party", "wedding", "corporate-event"]);
+const compactSongSchema = z.object({
+  songId: z.string(),
+  setNumber: z.number().int().min(1).optional(),
+  position: z.number().int().min(1).optional(),
+  title: z.string().optional(),
+  artist: z.string().optional(),
+  bpm: z.number().nullable().optional(),
+  duration: z.number().nullable().optional(),
+  key: z.string().nullable().optional(),
+  genre: z.string().nullable().optional(),
+  energy: z.number().nullable().optional(),
+  singalongScore: z.number().nullable().optional(),
+  danceability: z.number().nullable().optional(),
+  crowdFamiliarity: z.number().nullable().optional(),
+  femaleParticipationScore: z.number().nullable().optional(),
+  peakHourScore: z.number().nullable().optional(),
+  transitionFlexibility: z.number().nullable().optional(),
+  vocalDifficulty: z.number().nullable().optional(),
+  openerCandidate: z.boolean().nullable().optional(),
+  closerCandidate: z.boolean().nullable().optional(),
+  crowdResponseScore: z.number().nullable().optional(),
+});
 
 const bodySchema = z.object({
   setlistId: z.string().optional(),
@@ -22,13 +43,14 @@ const bodySchema = z.object({
   targetDurationSec: z.number().int().positive().optional(),
   sets: z.array(z.object({
     index: z.number().int().min(1),
-    songIds: z.array(z.string()).min(1),
+    songIds: z.array(z.string()).min(1).optional(),
+    songs: z.array(compactSongSchema).min(1).optional(),
   })).min(1),
 });
 
 const aiAnalysisSchema = z.object({
-  overallRating: z.number().min(1).max(10),
-  summary: z.string(),
+  overallRating: z.coerce.number().min(1).max(10).default(5),
+  summary: z.string().default("AI returned a partial set analysis."),
   strengths: z.array(z.string()).default([]),
   concerns: z.array(z.string()).default([]),
   recommendedMoves: z.array(z.string()).default([]),
@@ -47,6 +69,8 @@ const aiAnalysisSchema = z.object({
     artist: z.string(),
     reason: z.string(),
   })).default([]),
+  recommendedOrderWarning: z.string().nullable().optional(),
+  recommendedOrderProblems: z.array(z.string()).default([]),
 });
 
 function extractResponseText(payload: unknown) {
@@ -80,16 +104,38 @@ function rawDebugSnippet(payload: unknown) {
 function parseJsonText(text: string) {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return JSON.parse(fenced ? fenced[1] : trimmed);
+  if (fenced) return JSON.parse(fenced[1]);
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const jsonText = extractFirstJsonObject(trimmed);
+    if (!jsonText) throw new Error("No JSON object found.");
+    return JSON.parse(jsonText);
+  }
 }
 
-function safeShortNote(value: string | null) {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.length > MAX_NOTE_LENGTH) return undefined;
-  if ((trimmed.match(/\n/g) ?? []).length > 3) return undefined;
-  return trimmed;
+function extractFirstJsonObject(text: string) {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") inString = false;
+      continue;
+    }
+    if (char === "\"") inString = true;
+    else if (char === "{") depth++;
+    else if (char === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 function formatDate(value: string | undefined) {
@@ -101,6 +147,40 @@ async function lookupName(table: "bands" | "venues", id: string | undefined) {
   if (!id) return null;
   const result = await query(`SELECT name FROM ${table} WHERE id = $1`, [id]);
   return typeof result.rows[0]?.name === "string" ? result.rows[0].name as string : null;
+}
+
+function idsForSet(set: z.infer<typeof bodySchema>["sets"][number]) {
+  return set.songs?.map((song) => song.songId) ?? set.songIds ?? [];
+}
+
+function compactClientSongById(input: z.infer<typeof bodySchema>) {
+  const entries = input.sets.flatMap((set) => set.songs ?? []);
+  return new Map(entries.map((song) => [song.songId, song]));
+}
+
+function validateRecommendedOrder(analysis: z.infer<typeof aiAnalysisSchema>, expectedSongIds: string[], numSets: number) {
+  const expected = new Set(expectedSongIds);
+  const seen = new Set<string>();
+  const problems: string[] = [];
+  for (const item of analysis.recommendedOrder) {
+    if (!item.songId) {
+      problems.push(`Missing songId: ${item.title} - ${item.artist}`);
+      continue;
+    }
+    if (!expected.has(item.songId)) problems.push(`Unknown song: ${item.title} - ${item.artist}`);
+    if (seen.has(item.songId)) problems.push(`Duplicate song: ${item.title} - ${item.artist}`);
+    if (item.setNumber < 1 || item.setNumber > numSets) problems.push(`Invalid set number for ${item.title}: Set ${item.setNumber}`);
+    seen.add(item.songId);
+  }
+  for (const songId of expected) {
+    if (!seen.has(songId)) problems.push(`Missing songId: ${songId}`);
+  }
+  if (problems.length === 0) return analysis;
+  return {
+    ...analysis,
+    recommendedOrderWarning: "AI returned analysis but the recommended order was incomplete.",
+    recommendedOrderProblems: problems.slice(0, 12),
+  };
 }
 
 export const dynamic = "force-dynamic";
@@ -124,10 +204,11 @@ export async function POST(req: Request) {
       return privateJson({ ok: false, error: "bandId required" }, { status: 400 });
     }
 
-    const orderedIds = input.sets.flatMap((set) => set.songIds);
+    const orderedIds = input.sets.flatMap(idsForSet);
     const uniqueIds = [...new Set(orderedIds)];
     const rows = await querySongsByIds(uniqueIds);
     const byId = new Map(rows.map((row) => [row.id, row]));
+    const clientSongs = compactClientSongById(input);
     const crowdStats = input.venueId ? await getCrowdResponseStats(input.venueId, input.bandId) : new Map();
     const bandName = input.bandName || await lookupName("bands", input.bandId) || "Unspecified band";
     const venueName = input.venueName || await lookupName("venues", input.venueId) || "Unspecified venue";
@@ -135,19 +216,21 @@ export async function POST(req: Request) {
     let includedCount = 0;
     const sets = input.sets.map((set) => ({
       index: set.index,
-      songs: set.songIds.flatMap((id, songIndex) => {
+      songs: idsForSet(set).flatMap((id, songIndex) => {
         if (includedCount >= MAX_ANALYSIS_SONGS) return [];
         const song = byId.get(id);
         if (!song) return [];
         includedCount += 1;
         const stats = crowdStats.get(id);
+        const clientSong = clientSongs.get(id);
         return [{
+          songId: song.id,
+          setNumber: set.index,
           position: songIndex + 1,
           title: song.title,
           artist: song.artist,
-          songId: song.id,
           bpm: song.bpm,
-          durationSec: song.durationSec,
+          duration: song.durationSec,
           key: song.musicalKey,
           genre: song.genre,
           energy: song.energy,
@@ -160,11 +243,11 @@ export async function POST(req: Request) {
           vocalDifficulty: song.vocalDifficulty,
           openerCandidate: song.openerCandidate,
           closerCandidate: song.closerCandidate,
+          crowdResponseScore: clientSong?.crowdResponseScore ?? null,
           venueSpecificCrowdResponse: stats?.venueAverage == null ? null : {
             average: Number(stats.venueAverage.toFixed(1)),
             count: stats.venueCount,
           },
-          notes: safeShortNote(song.notes),
         }];
       }),
     }));
@@ -204,14 +287,14 @@ export async function POST(req: Request) {
         input: [
           {
             role: "system",
-            content: "You are a practical live music setlist analyst. Return only valid concise JSON. Do not use markdown.",
+            content: "You are a practical live music setlist analyst. Return only valid JSON. No markdown, comments, or prose outside JSON.",
           },
           {
             role: "user",
-            content: `Analyze this setlist context and return JSON with exactly these fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array. Each recommendedOrder item must have songId, setNumber, position, title, artist, reason. Use only provided songs. Do not invent songs. Use every provided song exactly once. Preserve the selected number of sets. Consider the event preset, venue, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Do not include long explanations. Do not use markdown. Return only valid JSON. Keep each non-order array to max 5 items. Keep each item under 160 characters. Keep each recommendedOrder reason to one short sentence under 160 characters.\n\n${JSON.stringify(context)}`,
+            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array. Each recommendedOrder item must have songId, setNumber, position, title, artist, reason. Use songId as the primary identifier. Use only provided songs. Do not invent songs. Every selected song must appear exactly once in recommendedOrder. Preserve the selected number of sets. Consider venue, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array, max 1 short reason per ordered song, each reason under 140 characters.\n\n${JSON.stringify(context)}`,
           },
         ],
-        max_output_tokens: 4000,
+        max_output_tokens: 6000,
       }),
     });
 
@@ -235,36 +318,40 @@ export async function POST(req: Request) {
         payload && typeof payload === "object" && "error" in payload
           ? (payload as { error?: { message?: string } }).error?.message
           : null;
-      return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) }, { status: response.status });
+      return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) });
     }
 
     if (payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {
       const incompleteDetails = (payload as { incomplete_details?: { reason?: unknown } }).incomplete_details;
       return privateJson({
         ok: false,
-        error: "AI analysis was cut off before completion. Try fewer songs or run again.",
+        error: "AI analysis was too long to complete. Try again or use fewer songs.",
         incompleteReason: typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : null,
         debugRawResponse: rawDebugSnippet(payload),
-      }, { status: 502 });
+      });
     }
 
     const text = extractResponseText(payload);
-    if (!text) return privateJson({ ok: false, error: "OpenAI returned an empty analysis.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
+    if (!text) return privateJson({ ok: false, error: "OpenAI returned no final analysis text.", debugRawResponse: rawDebugSnippet(payload) });
 
     let analysis: unknown;
     try {
       analysis = parseJsonText(text);
     } catch {
-      return privateJson({ ok: false, error: "OpenAI returned analysis that was not valid JSON.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
+      return privateJson({ ok: false, error: "OpenAI returned analysis that was not valid JSON.", debugRawResponse: rawDebugSnippet(payload) });
     }
 
     const validated = aiAnalysisSchema.safeParse(analysis);
     if (!validated.success) {
-      return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format.", debugRawResponse: rawDebugSnippet(payload) }, { status: 502 });
+      return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format.", details: validated.error.flatten(), debugRawResponse: rawDebugSnippet(payload) });
     }
 
-    return privateJson({ ok: true, analysis: validated.data });
+    return privateJson({ ok: true, analysis: validateRecommendedOrder(validated.data, orderedIds, input.numSets) });
   } catch (error) {
-    return authErrorResponse(error);
+    try {
+      return authErrorResponse(error);
+    } catch {
+      return privateJson({ ok: false, error: error instanceof Error ? error.message : "AI analysis failed." }, { status: 500 });
+    }
   }
 }
