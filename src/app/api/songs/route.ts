@@ -15,7 +15,7 @@ const songInput = z.object({
   musicalKey: z.string().max(32).optional().nullable(),
   durationSec: z.number().int().positive().max(36000).optional().nullable(),
   energy: rating.optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
+  notes: z.string().max(50000).optional().nullable(),
   genre: z.string().max(80).optional().nullable(),
   vibe: z.string().max(120).optional().nullable(),
   crowdScore: rating.optional().nullable(),

@@ -14,7 +14,7 @@ const patch = z.object({
   musicalKey: z.string().max(32).nullable().optional(),
   durationSec: z.number().int().positive().max(36000).nullable().optional(),
   energy: rating.nullable().optional(),
-  notes: z.string().max(2000).nullable().optional(),
+  notes: z.string().max(50000).nullable().optional(),
   genre: z.string().max(80).nullable().optional(),
   vibe: z.string().max(120).nullable().optional(),
   crowdScore: rating.nullable().optional(),
