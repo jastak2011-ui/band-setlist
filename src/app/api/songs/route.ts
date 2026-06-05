@@ -45,10 +45,25 @@ const songInput = z.object({
   onsongProviderUri: z.string().max(1000).optional().nullable(),
 });
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await requireUser();
-    const result = await query("SELECT * FROM songs ORDER BY lower(title), lower(artist)");
+    const url = new URL(req.url);
+    const search = url.searchParams.get("q")?.trim() ?? "";
+    const requestedLimit = Number(url.searchParams.get("limit") ?? 0);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(Math.round(requestedLimit), 100) : null;
+    const songParams: unknown[] = [];
+    let songSql = "SELECT * FROM songs";
+    if (search) {
+      songParams.push(`%${search.toLowerCase()}%`);
+      songSql += " WHERE lower(title) LIKE $1 OR lower(artist) LIKE $1";
+    }
+    songSql += " ORDER BY lower(title), lower(artist)";
+    if (limit) {
+      songParams.push(limit);
+      songSql += ` LIMIT $${songParams.length}`;
+    }
+    const result = await query(songSql, songParams);
     const accessibleBandIds = await getAccessibleBandIds(user);
     const ratingClause = accessibleBandIds === null ? "" : "AND band_id = ANY($1::text[])";
     const aliasedRatingClause = accessibleBandIds === null ? "" : "AND spr.band_id = ANY($1::text[])";

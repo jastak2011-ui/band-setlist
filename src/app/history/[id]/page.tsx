@@ -296,6 +296,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [showAddSong, setShowAddSong] = useState(false);
   const [addSongId, setAddSongId] = useState("");
   const [addSongQuery, setAddSongQuery] = useState("");
+  const [addSongResults, setAddSongResults] = useState<Song[]>([]);
+  const [addSongSearchBusy, setAddSongSearchBusy] = useState(false);
   const [addSongSetIndex, setAddSongSetIndex] = useState(1);
   const [addSongPosition, setAddSongPosition] = useState("");
   const [addingSong, setAddingSong] = useState(false);
@@ -305,18 +307,14 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const songMap = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
+  const addSongMap = useMemo(() => {
+    const map = new Map(songs.map((song) => [song.id, song]));
+    addSongResults.forEach((song) => map.set(song.id, song));
+    return map;
+  }, [addSongResults, songs]);
   const eventDuration = useMemo(() => totalDuration(sets.flatMap((set) => set.songs)), [sets]);
   const songCount = useMemo(() => sets.reduce((sum, set) => sum + set.songs.length, 0), [sets]);
   const currentSetSongs = useMemo(() => sets.flatMap((set) => set.songs), [sets]);
-  const filteredAddSongs = useMemo(() => {
-    const query = normalizeNameForMatch(addSongQuery);
-    return songs
-      .filter((song) => {
-        if (!query) return true;
-        return normalizeNameForMatch(`${song.title} ${song.artist}`).includes(query);
-      })
-      .slice(0, 80);
-  }, [addSongQuery, songs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -350,6 +348,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       setShowAddSong(false);
       setAddSongId("");
       setAddSongQuery("");
+      setAddSongResults([]);
       setAddSongSetIndex(detailJson.sets[0]?.index ?? 1);
       setAddSongPosition("");
       setDirty(false);
@@ -377,6 +376,42 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       cancelled = true;
     };
   }, [data?.setlist.bandId, data?.setlist.venueId, router]);
+
+  useEffect(() => {
+    if (!showAddSong) return;
+    const search = addSongQuery.trim();
+    setAddSongId("");
+    if (search.length < 2) {
+      setAddSongResults([]);
+      setAddSongSearchBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAddSongSearchBusy(true);
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        const params = new URLSearchParams({ q: search, limit: "50" });
+        const response = await fetch(`/api/songs?${params.toString()}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        const json = await readArrayResponse<Song>(response, router, "Song search").catch((error) => {
+          if (!cancelled) setMsg(error instanceof Error ? error.message : "Song search failed.");
+          return [];
+        });
+        if (!cancelled) {
+          setAddSongResults(json);
+          setAddSongSearchBusy(false);
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [addSongQuery, router, showAddSong]);
 
   function reshuffleAll() {
     if (sets.length === 0) return;
@@ -412,7 +447,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function addSongToSetlist() {
     if (addingSong) return;
-    const song = songMap.get(addSongId);
+    const song = addSongMap.get(addSongId);
     if (!song) {
       setMsg("Choose a song to add.");
       return;
@@ -929,16 +964,31 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               Search / Song
               <input
                 className="input mt-1"
-                placeholder="Search title or artist"
+                placeholder="Type at least 2 letters of title or artist"
                 value={addSongQuery}
                 onChange={(event) => setAddSongQuery(event.target.value)}
               />
               <select className="input mt-2" value={addSongId} onChange={(event) => setAddSongId(event.target.value)}>
-                <option value="">Choose song...</option>
-                {filteredAddSongs.map((song) => (
+                <option value="">
+                  {addSongQuery.trim().length < 2
+                    ? "Search to choose a song..."
+                    : addSongSearchBusy
+                      ? "Searching..."
+                      : addSongResults.length === 0
+                        ? "No matches found"
+                        : "Choose song..."}
+                </option>
+                {addSongResults.map((song) => (
                   <option key={song.id} value={song.id}>{song.title} - {song.artist}</option>
                 ))}
               </select>
+              <span className="mt-1 block text-[var(--muted)]">
+                {addSongQuery.trim().length < 2
+                  ? "Search the full song library by title or artist."
+                  : addSongSearchBusy
+                    ? "Searching the full library..."
+                    : `Showing ${addSongResults.length} matching song${addSongResults.length === 1 ? "" : "s"}.`}
+              </span>
             </label>
             <label className="block text-[var(--muted)]">
               Set
