@@ -292,6 +292,13 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [aiAnalysis, setAiAnalysis] = useState<AiSetAnalysis | null>(null);
   const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
   const [bulkRatingBusy, setBulkRatingBusy] = useState(false);
+  const [showCrowdResponse, setShowCrowdResponse] = useState(false);
+  const [showAddSong, setShowAddSong] = useState(false);
+  const [addSongId, setAddSongId] = useState("");
+  const [addSongQuery, setAddSongQuery] = useState("");
+  const [addSongSetIndex, setAddSongSetIndex] = useState(1);
+  const [addSongPosition, setAddSongPosition] = useState("");
+  const [addingSong, setAddingSong] = useState(false);
   const [draggedSong, setDraggedSong] = useState<DragLocation | null>(null);
   const [dragOverSong, setDragOverSong] = useState<DragLocation | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -301,6 +308,15 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const eventDuration = useMemo(() => totalDuration(sets.flatMap((set) => set.songs)), [sets]);
   const songCount = useMemo(() => sets.reduce((sum, set) => sum + set.songs.length, 0), [sets]);
   const currentSetSongs = useMemo(() => sets.flatMap((set) => set.songs), [sets]);
+  const filteredAddSongs = useMemo(() => {
+    const query = normalizeNameForMatch(addSongQuery);
+    return songs
+      .filter((song) => {
+        if (!query) return true;
+        return normalizeNameForMatch(`${song.title} ${song.artist}`).includes(query);
+      })
+      .slice(0, 80);
+  }, [addSongQuery, songs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -330,6 +346,12 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       setRecommendedSongs([]);
       setReplacementCursor(0);
       setAiAnalysis(null);
+      setShowCrowdResponse(false);
+      setShowAddSong(false);
+      setAddSongId("");
+      setAddSongQuery("");
+      setAddSongSetIndex(detailJson.sets[0]?.index ?? 1);
+      setAddSongPosition("");
       setDirty(false);
     })();
     return () => {
@@ -386,6 +408,40 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setDirty(true);
     setAiAnalysis(null);
     setMsg(message);
+  }
+
+  function addSongToSetlist() {
+    if (addingSong) return;
+    const song = songMap.get(addSongId);
+    if (!song) {
+      setMsg("Choose a song to add.");
+      return;
+    }
+    const alreadyInSetlist = sets.some((set) => set.songs.some((item) => item.id === song.id));
+    if (alreadyInSetlist && !window.confirm("This song is already in the setlist. Add it again?")) return;
+
+    setAddingSong(true);
+    setSets((current) => {
+      const targetSet = current.find((set) => set.index === addSongSetIndex) ?? current[0];
+      if (!targetSet) return current;
+      const requestedPosition = addSongPosition ? Number(addSongPosition) : targetSet.songs.length + 1;
+      const insertIndex = Number.isFinite(requestedPosition)
+        ? Math.max(0, Math.min(targetSet.songs.length, Math.round(requestedPosition) - 1))
+        : targetSet.songs.length;
+      return current.map((set) => {
+        if (set.index !== targetSet.index) return set;
+        const nextSongs = [...set.songs];
+        nextSongs.splice(insertIndex, 0, song);
+        return { ...set, songs: nextSongs };
+      });
+    });
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setAddSongId("");
+    setAddSongPosition("");
+    setAddingSong(false);
+    setMsg(`Added ${song.title} to Set ${addSongSetIndex}. Save changes to persist.`);
   }
 
   function autoReplaceSong(setIndex: number, songIndex: number) {
@@ -838,6 +894,12 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={aiBusy || busy || songCount === 0} onClick={() => void analyzeSetWithAi()}>
             {aiBusy ? "Analyzing set..." : "AI Analyze Set"}
           </button>
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowAddSong((value) => !value)}>
+            {showAddSong ? "Hide Add Song" : "Add Song"}
+          </button>
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowCrowdResponse((value) => !value)}>
+            {showCrowdResponse ? "Hide Crowd Response" : "Edit Crowd Response"}
+          </button>
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={reshuffleAll}>
             Reshuffle all
           </button>
@@ -854,7 +916,59 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
       {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentSetSongs} onApplyOrder={() => void applyAiRecommendedOrder()} />}
 
-      <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-xs">
+      {showAddSong && (
+        <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-xs">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-medium text-[var(--accent)]">Add Song</h2>
+              <p className="mt-1 text-[var(--muted)]">Add from the existing song library, then Save changes to persist.</p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+            <label className="block text-[var(--muted)]">
+              Search / Song
+              <input
+                className="input mt-1"
+                placeholder="Search title or artist"
+                value={addSongQuery}
+                onChange={(event) => setAddSongQuery(event.target.value)}
+              />
+              <select className="input mt-2" value={addSongId} onChange={(event) => setAddSongId(event.target.value)}>
+                <option value="">Choose song...</option>
+                {filteredAddSongs.map((song) => (
+                  <option key={song.id} value={song.id}>{song.title} - {song.artist}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[var(--muted)]">
+              Set
+              <select className="input mt-1 min-w-28" value={addSongSetIndex} onChange={(event) => {
+                setAddSongSetIndex(Number(event.target.value));
+                setAddSongPosition("");
+              }}>
+                {sets.map((set) => <option key={set.index} value={set.index}>Set {set.index}</option>)}
+              </select>
+            </label>
+            <label className="block text-[var(--muted)]">
+              Position
+              <input
+                className="input mt-1 w-28"
+                inputMode="numeric"
+                placeholder="End"
+                value={addSongPosition}
+                onChange={(event) => setAddSongPosition(event.target.value)}
+              />
+            </label>
+            <div className="flex items-end">
+              <button type="button" className="btn btn-primary h-10 px-3 text-xs" disabled={addingSong || !addSongId} onClick={addSongToSetlist}>
+                {addingSong ? "Adding..." : "Add Song"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCrowdResponse && <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-2 text-xs">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium text-[var(--text)]">Rate Entire Set</span>
           {crowdRatingOptions.map((option) => (
@@ -870,7 +984,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           ))}
           {bulkRatingBusy && <span className="text-[var(--muted)]">Saving...</span>}
         </div>
-      </div>
+      </div>}
 
       {sets.map((s) => {
         const setDuration = totalDuration(s.songs);
@@ -1029,11 +1143,13 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                       )}
                     </div>
                   )}
-                  <SongPerformanceRating
-                    song={song}
-                    busy={ratingBusyKey === `${s.index}-${song.id}-${songIndex}`}
-                    onSave={(score) => void saveRating(s.index, songIndex, song, score, song.performanceRating?.notes ?? null)}
-                  />
+                  {showCrowdResponse && (
+                    <SongPerformanceRating
+                      song={song}
+                      busy={ratingBusyKey === `${s.index}-${song.id}-${songIndex}`}
+                      onSave={(score) => void saveRating(s.index, songIndex, song, score, song.performanceRating?.notes ?? null)}
+                    />
+                  )}
                 </li>
               );
             })}
