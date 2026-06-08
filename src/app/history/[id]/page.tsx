@@ -288,6 +288,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [bpmExportBusy, setBpmExportBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<AiSetAnalysis | null>(null);
   const [ratingBusyKey, setRatingBusyKey] = useState<string | null>(null);
@@ -869,6 +870,34 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg("OnSong export downloaded.");
   }
 
+  async function exportBpmPrompter() {
+    setBpmExportBusy(true);
+    setMsg(null);
+    const response = await fetch(`/api/setlists/${id}/bpm-prompter-export`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sets: sets.map((set) => set.songs.map((song) => song.id)) }),
+    });
+    setBpmExportBusy(false);
+
+    if (!response.ok) {
+      setMsg("BPM Prompter export failed.");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filenameFromDisposition(response.headers.get("Content-Disposition")) ?? "Band Setlist - BPM Prompter.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMsg("BPM Prompter export downloaded.");
+  }
+
   function resetOrder() {
     if (!data) return;
     setSets(data.sets);
@@ -925,6 +954,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           <PrintButton className="px-3 py-1 text-xs" />
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={exportBusy || songCount === 0} onClick={() => void exportOnSong()}>
             {exportBusy ? "Exporting" : "OnSong Export"}
+          </button>
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={bpmExportBusy || songCount === 0} onClick={() => void exportBpmPrompter()}>
+            {bpmExportBusy ? "Exporting" : "BPM Prompter Export"}
           </button>
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={aiBusy || busy || songCount === 0} onClick={() => void analyzeSetWithAi()}>
             {aiBusy ? "Analyzing set..." : "AI Analyze Set"}
