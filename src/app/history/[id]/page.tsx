@@ -131,6 +131,53 @@ function redistributeSongs(songs: Song[], count: number) {
   return sets;
 }
 
+function renumberSets(sets: Detail["sets"]) {
+  return sets.map((set, index) => ({ ...set, index: index + 1 }));
+}
+
+function splitSongsEvenlyByCount(songs: Song[], count: number) {
+  const setCount = Math.max(1, Math.min(4, count));
+  const base = Math.floor(songs.length / setCount);
+  const remainder = songs.length % setCount;
+  let cursor = 0;
+  return Array.from({ length: setCount }, (_, index) => {
+    const size = base + (index < remainder ? 1 : 0);
+    const nextSongs = songs.slice(cursor, cursor + size);
+    cursor += size;
+    return { index: index + 1, songs: nextSongs };
+  });
+}
+
+function splitSongsEvenlyByDuration(songs: Song[], count: number) {
+  const setCount = Math.max(1, Math.min(4, count));
+  const totalSeconds = totalDuration(songs);
+  if (totalSeconds <= 0) return splitSongsEvenlyByCount(songs, setCount);
+  const targetSeconds = totalSeconds / setCount;
+  const sets = Array.from({ length: setCount }, (_, index) => ({ index: index + 1, songs: [] as Song[] }));
+  let setIndex = 0;
+  let currentSeconds = 0;
+
+  songs.forEach((song, songIndex) => {
+    const remainingSongs = songs.length - songIndex;
+    const remainingSets = setCount - setIndex;
+    const shouldStartNextSet =
+      sets[setIndex].songs.length > 0 &&
+      setIndex < setCount - 1 &&
+      remainingSongs > remainingSets &&
+      currentSeconds + (song.durationSec ?? 0) > targetSeconds;
+
+    if (shouldStartNextSet) {
+      setIndex += 1;
+      currentSeconds = 0;
+    }
+
+    sets[setIndex].songs.push(song);
+    currentSeconds += song.durationSec ?? 0;
+  });
+
+  return sets;
+}
+
 function filenameFromDisposition(disposition: string | null) {
   if (!disposition) return null;
   const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -295,6 +342,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const [bulkRatingBusy, setBulkRatingBusy] = useState(false);
   const [showCrowdResponse, setShowCrowdResponse] = useState(false);
   const [showAddSong, setShowAddSong] = useState(false);
+  const [showSplitControls, setShowSplitControls] = useState(false);
+  const [splitSetCount, setSplitSetCount] = useState(2);
   const [addSongId, setAddSongId] = useState("");
   const [addSongQuery, setAddSongQuery] = useState("");
   const [addSongResults, setAddSongResults] = useState<Song[]>([]);
@@ -316,6 +365,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   const eventDuration = useMemo(() => totalDuration(sets.flatMap((set) => set.songs)), [sets]);
   const songCount = useMemo(() => sets.reduce((sum, set) => sum + set.songs.length, 0), [sets]);
   const currentSetSongs = useMemo(() => sets.flatMap((set) => set.songs), [sets]);
+  const hasDurationData = useMemo(() => currentSetSongs.some((song) => (song.durationSec ?? 0) > 0), [currentSetSongs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -347,6 +397,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       setAiAnalysis(null);
       setShowCrowdResponse(false);
       setShowAddSong(false);
+      setShowSplitControls(false);
+      setSplitSetCount(Math.min(4, Math.max(1, detailJson.sets.length || 2)));
       setAddSongId("");
       setAddSongQuery("");
       setAddSongResults([]);
@@ -458,6 +510,58 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setAiAnalysis(null);
     setReplacementPrompt(null);
     setMsg(`Removed ${song.title}. Save changes to persist.`);
+  }
+
+  function applySplitIntoSetCount(mode: "count" | "duration") {
+    const nextSetCount = Math.max(1, Math.min(4, splitSetCount));
+    const allSongs = sets.flatMap((set) => set.songs);
+    const nextSets = mode === "duration"
+      ? splitSongsEvenlyByDuration(allSongs, nextSetCount)
+      : splitSongsEvenlyByCount(allSongs, nextSetCount);
+    setSets(nextSets);
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setAddSongSetIndex(Math.min(nextSetCount, Math.max(1, addSongSetIndex)));
+    setMsg(nextSetCount === 1 ? "Merged into one set. Save changes to persist." : `Split into ${nextSetCount} sets. Save changes to persist.`);
+  }
+
+  function addSetBreakAfter(setIndex: number, songIndex: number) {
+    setSets((current) => {
+      const setPosition = current.findIndex((set) => set.index === setIndex);
+      const source = current[setPosition];
+      if (!source || songIndex >= source.songs.length - 1) return current;
+      const beforeBreak = source.songs.slice(0, songIndex + 1);
+      const afterBreak = source.songs.slice(songIndex + 1);
+      return renumberSets([
+        ...current.slice(0, setPosition),
+        { ...source, songs: beforeBreak },
+        { index: source.index + 1, songs: afterBreak },
+        ...current.slice(setPosition + 1),
+      ]);
+    });
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setMsg("Set break added. Save changes to persist.");
+  }
+
+  function removeSetBreakBefore(setIndex: number) {
+    setSets((current) => {
+      const setPosition = current.findIndex((set) => set.index === setIndex);
+      if (setPosition <= 0) return current;
+      const previous = current[setPosition - 1];
+      const target = current[setPosition];
+      return renumberSets([
+        ...current.slice(0, setPosition - 1),
+        { ...previous, songs: [...previous.songs, ...target.songs] },
+        ...current.slice(setPosition + 1),
+      ]);
+    });
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setMsg("Set break removed. Save changes to persist.");
   }
 
   function addSongToSetlist() {
@@ -978,6 +1082,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowAddSong((value) => !value)}>
             {showAddSong ? "Hide Add Song" : "Add Song"}
           </button>
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowSplitControls((value) => !value)}>
+            {showSplitControls ? "Hide Split Controls" : "Split Into Sets"}
+          </button>
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowCrowdResponse((value) => !value)}>
             {showCrowdResponse ? "Hide Crowd Response" : "Edit Crowd Response"}
           </button>
@@ -996,6 +1103,40 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       {msg && <div className="no-print rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">{msg}</div>}
 
       {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentSetSongs} onApplyOrder={() => void applyAiRecommendedOrder()} />}
+
+      {showSplitControls && (
+        <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-xs">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-medium text-[var(--accent)]">Split Into Sets</h2>
+              <p className="mt-1 text-[var(--muted)]">
+                Preserve the current song order while reshaping this saved setlist. Save changes to persist.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block text-[var(--muted)]">
+              Number of sets
+              <select className="input mt-1 min-w-28" value={splitSetCount} onChange={(event) => setSplitSetCount(Number(event.target.value))}>
+                {[1, 2, 3, 4].map((count) => <option key={count} value={count}>{count}</option>)}
+              </select>
+            </label>
+            <button type="button" className="btn btn-primary h-10 px-3 text-xs" disabled={songCount === 0} onClick={() => applySplitIntoSetCount("count")}>
+              Split evenly by song count
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost h-10 px-3 text-xs"
+              disabled={songCount === 0 || !hasDurationData}
+              onClick={() => applySplitIntoSetCount("duration")}
+              title={hasDurationData ? "Split by available duration data" : "No song duration data is available"}
+            >
+              Split evenly by duration
+            </button>
+            <span className="text-[var(--muted)]">Manual option: use Add Set Break After This Song on any row.</span>
+          </div>
+        </div>
+      )}
 
       {showAddSong && (
         <div className="no-print rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-xs">
@@ -1088,9 +1229,16 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         <div key={s.index} className="card print-section">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-medium text-[var(--accent)]">Set {s.index} <span className="mono text-xs text-[var(--muted)]">- {formatDuration(setDuration)}</span></h2>
-            <button type="button" className="btn btn-ghost no-print px-2 py-1 text-xs" onClick={() => reshuffleSet(s.index)}>
-              Reshuffle set
-            </button>
+            <div className="no-print flex flex-wrap gap-2">
+              {s.index > 1 && (
+                <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => removeSetBreakBefore(s.index)}>
+                  Remove Set Break
+                </button>
+              )}
+              <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => reshuffleSet(s.index)}>
+                Reshuffle set
+              </button>
+            </div>
           </div>
           <ol
             className={`no-print space-y-1 rounded-lg text-sm ${draggedSong ? "border border-dashed border-[var(--border)] p-1" : ""}`}
@@ -1206,6 +1354,16 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                     >
                       Remove
                     </button>
+                    {songIndex < s.songs.length - 1 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-7 px-2 py-0 text-xs"
+                        onClick={() => addSetBreakAfter(s.index, songIndex)}
+                        title="Create a new set starting with the next song"
+                      >
+                        Add Set Break After
+                      </button>
+                    )}
                   </span>
                   {promptIsOpen && (
                     <div className="col-start-3 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
@@ -1290,5 +1448,3 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     </div>
   );
 }
-
-
