@@ -446,6 +446,20 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg(message);
   }
 
+  function removeSongFromSetlist(setIndex: number, songIndex: number, song: Song) {
+    if (!window.confirm("Remove this song from this saved setlist?")) return;
+    setSets((current) =>
+      current.map((set) => {
+        if (set.index !== setIndex) return set;
+        return { ...set, songs: set.songs.filter((_, index) => index !== songIndex) };
+      }),
+    );
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setMsg(`Removed ${song.title}. Save changes to persist.`);
+  }
+
   function addSongToSetlist() {
     if (addingSong) return;
     const song = addSongMap.get(addSongId);
@@ -1184,6 +1198,14 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                     >
                       Next
                     </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost h-7 px-2 py-0 text-xs text-rose-200 hover:text-rose-100"
+                      onClick={() => removeSongFromSetlist(s.index, songIndex, song)}
+                      title="Remove from this setlist"
+                    >
+                      Remove
+                    </button>
                   </span>
                   {promptIsOpen && (
                     <div className="col-start-3 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
@@ -1268,7 +1290,5 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     </div>
   );
 }
-
-
 
 
