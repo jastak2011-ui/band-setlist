@@ -4,7 +4,7 @@ import { authErrorResponse, requireUser } from "@/lib/auth";
 import { mapNamedRow, query } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
-const venueTypes = ["Bar Crowd", "Brewery", "Private Party", "Wedding", "Corporate Event"] as const;
+const venueTypes = ["Bar Crowd", "Brewery", "Restaurant", "Outdoor", "Private Party", "Wedding", "Corporate Event"] as const;
 const crowdSetups = ["Seated", "Standing", "Mixed"] as const;
 const nullableVenueType = z.preprocess((value) => value === "" ? null : value, z.enum(venueTypes).nullable().optional());
 const nullableCrowdSetup = z.preprocess((value) => value === "" ? null : value, z.enum(crowdSetups).nullable().optional());

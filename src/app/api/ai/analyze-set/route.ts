@@ -7,7 +7,7 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const MODEL = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-nano";
 const MAX_ANALYSIS_SONGS = 160;
 
-const eventType = z.enum(["bar-crowd", "brewery", "private-party", "wedding", "corporate-event"]);
+const eventType = z.enum(["bar-crowd", "brewery", "restaurant", "outdoor", "private-party", "wedding", "corporate-event"]);
 const compactSongSchema = z.object({
   songId: z.string(),
   setNumber: z.number().int().min(1).optional(),
@@ -155,9 +155,10 @@ function timeOfDayLabel(startTime: string | undefined) {
   if (!startTime) return null;
   const hour = Number(startTime.slice(0, 2));
   if (!Number.isFinite(hour)) return null;
-  if (hour < 17) return "afternoon";
-  if (hour < 21) return "early evening";
-  return "late night";
+  if (hour < 17) return "Afternoon";
+  if (hour < 19) return "Early Evening";
+  if (hour < 22) return "Prime Time Evening";
+  return "Late Night";
 }
 
 async function lookupName(table: "bands" | "venues", id: string | undefined) {
@@ -342,6 +343,7 @@ export async function POST(req: Request) {
         "Do not simply return the current order unless it is genuinely the best order.",
         "If keeping the same order, explain why in orderChangeSummary.reason.",
         "Consider venue type, crowd setup, start time, end time, and time of day.",
+        "Apply venue guidance: Restaurant should start conversation-friendly and build gradually; Outdoor needs a strong familiar opener and can ramp sooner; Bar Crowd can start with higher energy; Brewery should feel social and familiar while building through the night; Private Party should balance familiarity and variety; Wedding should prioritize broad familiarity, danceability, and singalong moments; Corporate Event should start conservatively with broad appeal.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
@@ -389,7 +391,7 @@ orderReasons rules:
 - Do not provide a reason for every song.
 - Each reason under 140 characters.
 
-Consider venue type, crowd setup, time of day, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit or Energy Flow when relevant. Consider whether the gig likely starts as background music and builds later, whether early songs should be lower intensity, and whether late songs should lean higher singalong/dance/anthem material. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
+Consider venue type, crowd setup, start/end time, time of day, expected audience engagement level, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit, Energy Flow, Recommended Moves, Suggested Opener, or Suggested Closer when relevant. Venue guidance: Restaurant means conversation-friendly early pacing, gradual energy build, familiar songs, and avoid peaking too early. Outdoor means attention is harder to capture, so familiar songs, singalongs, and a strong opener matter, with energy able to ramp sooner. Bar Crowd can handle higher energy earlier. Brewery should feel casual/social and build engagement through the night. Private Party should balance familiarity and variety. Wedding should prioritize broad familiarity, danceability, and singalong moments. Corporate Event should use conservative early pacing and broad appeal. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
           },
         ],
         max_output_tokens: 6000,

@@ -68,7 +68,7 @@ export async function GET(req: Request) {
 }
 
 function parseEventType(value: string | null): RecommendationEventType {
-  if (value === "brewery" || value === "private-party" || value === "wedding" || value === "corporate-event") return value;
+  if (value === "brewery" || value === "restaurant" || value === "outdoor" || value === "private-party" || value === "wedding" || value === "corporate-event") return value;
   return "bar-crowd";
 }
 

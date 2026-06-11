@@ -2,7 +2,7 @@
 
 const DEFAULT_RECENT = 10;
 
-export type RecommendationEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
+export type RecommendationEventType = "bar-crowd" | "brewery" | "restaurant" | "outdoor" | "private-party" | "wedding" | "corporate-event";
 
 type RecommendationSong = {
   id: string;
@@ -80,6 +80,8 @@ export function scoreSongForRecommendation(songId: string, playCounts: Map<strin
 const eventLabels: Record<RecommendationEventType, string> = {
   "bar-crowd": "Bar Crowd",
   brewery: "Brewery",
+  restaurant: "Restaurant",
+  outdoor: "Outdoor",
   "private-party": "Private Party",
   wedding: "Wedding",
   "corporate-event": "Corporate Event",
@@ -123,6 +125,8 @@ function eventFitScore(song: RecommendationSong, eventType: RecommendationEventT
   const broadAge = broadAgeAppeal(song);
   const safe = cleanMainstreamScore(song);
   if (eventType === "brewery") return crowd * 0.28 + energy * 0.2 + singalong * 0.19 + broadAge * 0.19 + dance * 0.08 + peak * 0.06;
+  if (eventType === "restaurant") return crowd * 0.3 + flex * 0.2 + singalong * 0.16 + broadAge * 0.14 + (1 - Math.abs(energy - 0.5)) * 0.14 + safe * 0.06;
+  if (eventType === "outdoor") return crowd * 0.24 + singalong * 0.2 + energy * 0.18 + broadAge * 0.14 + dance * 0.12 + peak * 0.12;
   if (eventType === "private-party") return singalong * 0.27 + crowd * 0.24 + dance * 0.18 + broadAge * 0.16 + female * 0.1 + (1 - Math.abs(energy - 0.65)) * 0.05;
   if (eventType === "wedding") return singalong * 0.28 + female * 0.21 + dance * 0.19 + allAges(song) * 0.14 + crowd * 0.13 + flex * 0.05;
   if (eventType === "corporate-event") return crowd * 0.28 + broadAge * 0.22 + safe * 0.18 + (1 - Math.abs(energy - 0.58)) * 0.16 + flex * 0.16;
@@ -219,6 +223,8 @@ function recommendationReasons(song: RecommendationSong, eventType: Recommendati
   if (eventType === "wedding" && eventFitScore(song, eventType) >= 0.78) reasons.push("Excellent wedding fit");
   if (eventType === "corporate-event" && cleanMainstreamScore(song) >= 0.85) reasons.push("Clean mainstream fit");
   if (eventType === "brewery" && broadAge >= 0.5) reasons.push("Good brewery crowd fit");
+  if (eventType === "restaurant" && effectiveEnergy(song) <= 0.68 && crowd >= 0.6) reasons.push("Conversation-friendly familiar fit");
+  if (eventType === "outdoor" && crowd >= 0.7 && singalong >= 0.65) reasons.push("Strong outdoor attention fit");
   if (reasons.length === 0) reasons.push(`Solid ${eventLabels[eventType]} fit`);
   return reasons.slice(0, 4);
 }

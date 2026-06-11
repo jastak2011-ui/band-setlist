@@ -6,7 +6,7 @@ import { readArrayResponse } from "@/app/client-fetch";
 
 type Venue = { id: string; name: string; venueType: string | null; crowdSetup: string | null; createdAt: string };
 
-const venueTypeOptions = ["Bar Crowd", "Brewery", "Private Party", "Wedding", "Corporate Event"];
+const venueTypeOptions = ["Bar Crowd", "Brewery", "Restaurant", "Outdoor", "Private Party", "Wedding", "Corporate Event"];
 const crowdSetupOptions = ["Seated", "Standing", "Mixed"];
 
 export default function VenuesPage() {

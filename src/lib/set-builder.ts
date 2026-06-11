@@ -1,6 +1,6 @@
 ﻿export type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 
-export type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
+export type SetBuildEventType = "bar-crowd" | "brewery" | "restaurant" | "outdoor" | "private-party" | "wedding" | "corporate-event";
 
 export type SmartBuildOptions = {
   strategy?: SetlistStrategy;
@@ -68,6 +68,14 @@ const eventTypeProfiles: Record<SetBuildEventType, { label: string; priorities: 
   brewery: {
     label: "Brewery",
     priorities: ["Familiarity", "Energy", "Singalong", "Broad age appeal", "Moderate peak-hour pressure"],
+  },
+  restaurant: {
+    label: "Restaurant",
+    priorities: ["Conversation-friendly pacing", "Familiarity", "Gradual energy build", "Smooth transitions", "Moderate volume feel"],
+  },
+  outdoor: {
+    label: "Outdoor",
+    priorities: ["Strong opener", "Crowd familiarity", "Singalong", "Earlier energy ramp", "Broad appeal"],
   },
   "private-party": {
     label: "Private Party",
@@ -140,6 +148,8 @@ function eventTypeScore(song: SongForSet, eventType: SetBuildEventType) {
   const allAges = hasAllAgesAppeal(song);
   const safe = cleanMainstreamScore(song);
   if (eventType === "brewery") return crowd * 0.28 + energy * 0.2 + singalong * 0.19 + broadAge * 0.19 + dance * 0.08 + peak * 0.06;
+  if (eventType === "restaurant") return crowd * 0.3 + flex * 0.2 + singalong * 0.16 + broadAge * 0.14 + (1 - Math.abs(energy - 0.5)) * 0.14 + safe * 0.06;
+  if (eventType === "outdoor") return crowd * 0.24 + singalong * 0.2 + energy * 0.18 + broadAge * 0.14 + dance * 0.12 + peak * 0.12;
   if (eventType === "private-party") return singalong * 0.27 + crowd * 0.24 + dance * 0.18 + broadAge * 0.16 + female * 0.1 + (1 - Math.abs(energy - 0.65)) * 0.05;
   if (eventType === "wedding") return singalong * 0.28 + female * 0.21 + dance * 0.19 + allAges * 0.14 + crowd * 0.13 + flex * 0.05;
   if (eventType === "corporate-event") return crowd * 0.28 + broadAge * 0.22 + safe * 0.18 + (1 - Math.abs(energy - 0.58)) * 0.16 + flex * 0.16;
@@ -292,6 +302,15 @@ function chooseSongForSlot(
 
     score += eventFit * 3;
     if (options.eventType === "brewery" && peakSong) score -= 0.8;
+    if (options.eventType === "restaurant") {
+      score += (1 - Math.abs(energy - 0.5)) * 1.8 + flex * 1.2;
+      if (progress < 0.35 && peakSong) score -= 2.5;
+      if (energy > 0.82 && progress < 0.5) score -= 2;
+    }
+    if (options.eventType === "outdoor") {
+      if (firstSlot) score += crowd * 2 + singalong * 1.4 + energy;
+      if (progress > 0.25) score += peak * 0.9 + energy * 0.6;
+    }
     if (options.eventType === "wedding") {
       if (crowd < 0.45) score -= 3;
       if (dance < 0.45) score -= 3;

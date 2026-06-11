@@ -6,7 +6,7 @@ import { getCrowdResponseStats, getVenueSongPlayCounts, scoreVenueAwareRecommend
 import { holidaySongsOutsideSeason } from "@/lib/seasonality";
 
 const strategy = z.enum(["balanced", "high-energy", "dance-heavy", "singalong-heavy", "acoustic-chill", "build-slowly"]);
-const eventType = z.enum(["bar-crowd", "brewery", "private-party", "wedding", "corporate-event"]);
+const eventType = z.enum(["bar-crowd", "brewery", "restaurant", "outdoor", "private-party", "wedding", "corporate-event"]);
 
 const body = z.object({
   songIds: z.array(z.string()).min(1),

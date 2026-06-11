@@ -14,6 +14,10 @@ const patchBody = z.object({
   sets: z.array(z.array(z.string()).min(0)).min(1).optional(),
 });
 
+function timesAreValid(startTime: string | null | undefined, endTime: string | null | undefined) {
+  return !startTime || !endTime || endTime > startTime;
+}
+
 export const dynamic = "force-dynamic";
 
 async function getSetlistDetail(id: string) {
@@ -97,10 +101,17 @@ export async function PATCH(req: Request, context: Params) {
     const parsed = patchBody.safeParse(json);
     if (!parsed.success) return privateJson({ error: parsed.error.flatten() }, { status: 400 });
 
-    const exists = await query("SELECT id, band_id FROM setlists WHERE id = $1", [id]);
+    const exists = await query("SELECT id, band_id, start_time, end_time FROM setlists WHERE id = $1", [id]);
     if (!exists.rows[0]) return privateJson({ error: "Not found" }, { status: 404 });
     await requireBandAccess(user, exists.rows[0].band_id);
     if (parsed.data.bandId !== undefined) await requireBandAccess(user, parsed.data.bandId);
+    const currentStart = typeof exists.rows[0].start_time === "string" ? exists.rows[0].start_time.slice(0, 5) : null;
+    const currentEnd = typeof exists.rows[0].end_time === "string" ? exists.rows[0].end_time.slice(0, 5) : null;
+    const nextStart = parsed.data.startTime !== undefined ? parsed.data.startTime : currentStart;
+    const nextEnd = parsed.data.endTime !== undefined ? parsed.data.endTime : currentEnd;
+    if (!timesAreValid(nextStart, nextEnd)) {
+      return privateJson({ error: "End Time must be after Start Time." }, { status: 400 });
+    }
 
   await transaction(async (client) => {
     const updates: string[] = [];

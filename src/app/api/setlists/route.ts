@@ -14,6 +14,10 @@ const saveBody = z.object({
   sets: z.array(z.array(z.string())).min(1),
 });
 
+function timesAreValid(startTime: string | null | undefined, endTime: string | null | undefined) {
+  return !startTime || !endTime || endTime > startTime;
+}
+
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
@@ -82,6 +86,9 @@ export async function POST(req: Request) {
     const parsed = saveBody.safeParse(json);
     if (!parsed.success) {
       return privateJson({ error: parsed.error.flatten() }, { status: 400 });
+    }
+    if (!timesAreValid(parsed.data.startTime, parsed.data.endTime)) {
+      return privateJson({ error: "End Time must be after Start Time." }, { status: 400 });
     }
     await requireBandAccess(user, parsed.data.bandId);
 

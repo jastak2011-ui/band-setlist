@@ -25,7 +25,7 @@ type Song = {
   closerCandidate?: boolean | null;
 };
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
-type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
+type SetBuildEventType = "bar-crowd" | "brewery" | "restaurant" | "outdoor" | "private-party" | "wedding" | "corporate-event";
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string; venueType: string | null; crowdSetup: string | null };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
@@ -74,6 +74,8 @@ type ImportDetectedMetadata = { fileName: string; bandName: string | null; venue
 const venueTypeToEventType: Record<string, SetBuildEventType> = {
   "Bar Crowd": "bar-crowd",
   Brewery: "brewery",
+  Restaurant: "restaurant",
+  Outdoor: "outdoor",
   "Private Party": "private-party",
   Wedding: "wedding",
   "Corporate Event": "corporate-event",
@@ -1158,6 +1160,8 @@ export default function BuilderPage() {
               }}>
                 <option value="bar-crowd">Bar Crowd</option>
                 <option value="brewery">Brewery</option>
+                <option value="restaurant">Restaurant</option>
+                <option value="outdoor">Outdoor</option>
                 <option value="private-party">Private Party</option>
                 <option value="wedding">Wedding</option>
                 <option value="corporate-event">Corporate Event</option>

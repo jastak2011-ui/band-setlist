@@ -45,6 +45,14 @@ function formatTime(value: string | null | undefined) {
   return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+function timeInputValue(value: string | null | undefined) {
+  return value ? value.slice(0, 5) : "";
+}
+
+function timesAreValid(startTime: string, endTime: string) {
+  return !startTime || !endTime || endTime > startTime;
+}
+
 function sortHistoryLists(lists: Setlist[]) {
   const time = (value: string | null | undefined) => value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
   return [...lists].sort((a, b) => (
@@ -73,6 +81,7 @@ export default function HistoryPage() {
   const [lists, setLists] = useState<Setlist[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [timeDrafts, setTimeDrafts] = useState<Record<string, { startTime: string; endTime: string }>>({});
   const [msg, setMsg] = useState<string | null>(null);
 
   const bandMap = useMemo(() => new Map(bands.map((band) => [band.id, band])), [bands]);
@@ -163,6 +172,46 @@ export default function HistoryPage() {
     setMsg("Performance date updated.");
   }
 
+  async function updateSetlistTimes(list: Setlist) {
+    const draft = timeDrafts[list.id] ?? { startTime: timeInputValue(list.startTime), endTime: timeInputValue(list.endTime) };
+    if (!timesAreValid(draft.startTime, draft.endTime)) {
+      setMsg("End Time must be after Start Time.");
+      return;
+    }
+
+    setBusyId(list.id);
+    setMsg(null);
+    const r = await fetch(`/api/setlists/${list.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startTime: draft.startTime || null,
+        endTime: draft.endTime || null,
+      }),
+    });
+    setBusyId(null);
+    if (!r.ok) {
+      setMsg(await readErrorMessage(r));
+      return;
+    }
+    const detail = await r.json().catch(() => null);
+    const updated = detail?.setlist;
+    const nextStartTime = updated?.startTime ?? (draft.startTime || null);
+    const nextEndTime = updated?.endTime ?? (draft.endTime || null);
+    setLists((current) => sortHistoryLists(current.map((row) => (row.id === list.id ? {
+      ...row,
+      startTime: nextStartTime,
+      endTime: nextEndTime,
+      updatedAt: updated?.updatedAt ?? new Date().toISOString(),
+    } : row))));
+    setTimeDrafts((current) => {
+      const next = { ...current };
+      delete next[list.id];
+      return next;
+    });
+    setMsg("Setlist times updated.");
+  }
+
   async function duplicateList(list: Setlist) {
     setBusyId(list.id);
     setMsg(null);
@@ -224,6 +273,8 @@ export default function HistoryPage() {
         {lists.map((l) => {
           const bandName = l.bandId ? (bandMap.get(l.bandId)?.name ?? `band id ${l.bandId.slice(0, 6)}`) : "No band";
           const venueName = venueMap.get(l.venueId)?.name ?? `venue id ${l.venueId.slice(0, 6)}`;
+          const draft = timeDrafts[l.id] ?? { startTime: timeInputValue(l.startTime), endTime: timeInputValue(l.endTime) };
+          const timesChanged = draft.startTime !== timeInputValue(l.startTime) || draft.endTime !== timeInputValue(l.endTime);
           return (
             <li key={l.id} className="card flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-64 flex-1">
@@ -232,15 +283,43 @@ export default function HistoryPage() {
                   Performance date: {l.performedAt ? formatHistoryDate(l.performedAt) : "Not set"} &ndash; {bandName} &ndash; {venueName}
                 </div>
                 <div className="mt-1 text-xs text-[var(--muted)]">
+                  Venue Type: {l.venueType ?? "Not set"} &bull; Crowd Setup: {l.crowdSetup ?? "Mixed"}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Start: {formatTime(l.startTime) ?? "Not set"} &bull; End: {formatTime(l.endTime) ?? "Not set"}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
                   {plural(l.setCount ?? (l.songCount ? 1 : 0), "set")} &bull; {plural(l.songCount ?? 0, "song")}
-                  {(l.venueType || l.crowdSetup || l.startTime || l.endTime) && (
-                    <span> &bull; {l.venueType ?? "Venue type not set"} &bull; {l.crowdSetup ?? "Mixed"}{(l.startTime || l.endTime) ? ` &bull; ${formatTime(l.startTime) ?? "?"} - ${formatTime(l.endTime) ?? "?"}` : ""}</span>
-                  )}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {editingId === l.id && (
                   <input className="input w-36 px-2 py-1 text-xs" type="date" value={dateInputValue(l.performedAt)} disabled={busyId === l.id} onChange={(e) => void updatePerformanceDate(l, e.target.value)} />
+                )}
+                <label className="text-xs text-[var(--muted)]">
+                  Start
+                  <input
+                    className="input ml-1 w-28 px-2 py-1 text-xs"
+                    type="time"
+                    value={draft.startTime}
+                    disabled={busyId === l.id}
+                    onChange={(e) => setTimeDrafts((current) => ({ ...current, [l.id]: { ...draft, startTime: e.target.value } }))}
+                  />
+                </label>
+                <label className="text-xs text-[var(--muted)]">
+                  End
+                  <input
+                    className="input ml-1 w-28 px-2 py-1 text-xs"
+                    type="time"
+                    value={draft.endTime}
+                    disabled={busyId === l.id}
+                    onChange={(e) => setTimeDrafts((current) => ({ ...current, [l.id]: { ...draft, endTime: e.target.value } }))}
+                  />
+                </label>
+                {timesChanged && (
+                  <button type="button" className="btn btn-primary px-3 py-1 text-xs" disabled={busyId === l.id} onClick={() => void updateSetlistTimes(l)}>
+                    Save Times
+                  </button>
                 )}
                 <select className="input w-44 px-2 py-1 text-xs" value={l.bandId ?? ""} disabled={busyId === l.id} onChange={(e) => void updateBand(l, e.target.value)}>
                   <option value="">No band</option>
