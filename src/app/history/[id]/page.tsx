@@ -54,7 +54,7 @@ type Detail = {
   };
   sets: { index: number; songs: Song[] }[];
 };
-type AiRecommendedOrderItem = { songId?: string; setNumber: number; position: number; title: string; artist: string; reason: string };
+type AiRecommendedOrderItem = { songId: string; setNumber: number; position: number };
 type AiSetAnalysis = {
   overallRating: number;
   summary: string;
@@ -69,6 +69,7 @@ type AiSetAnalysis = {
   venueFitNotes: string[];
   songsToWatch: string[];
   recommendedOrder: AiRecommendedOrderItem[];
+  orderReasons?: Record<string, string>;
   recommendedOrderWarning?: string | null;
   recommendedOrderProblems?: string[];
 };
@@ -216,7 +217,6 @@ function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boole
 
 function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis: AiSetAnalysis; currentSongs: Song[]; onApplyOrder: () => void }) {
   const byId = new Map(currentSongs.map((song) => [song.id, song]));
-  const byIdentity = new Map(currentSongs.map((song) => [normalizeSongKey(song.title, song.artist), song]));
   const recommendedBySet = [...analysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
 
   return (
@@ -275,13 +275,14 @@ function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis
                 <h4 className="mb-2 text-sm font-medium text-[var(--accent)]">Set {setNumber}</h4>
                 <ol className="list-decimal space-y-1 pl-5 text-xs text-[var(--muted)]">
                   {recommendedBySet.filter((item) => item.setNumber === setNumber).map((item) => {
-                    const song = item.songId ? byId.get(item.songId) : byIdentity.get(normalizeSongKey(item.title, item.artist));
+                    const song = byId.get(item.songId);
+                    const reason = analysis.orderReasons?.[item.songId];
                     return (
-                      <li key={`${item.setNumber}-${item.position}-${item.songId ?? item.title}-${item.artist}`}>
-                        <span className="font-medium text-[var(--text)]">{item.title}</span>
-                        <span> - {item.artist}</span>
+                      <li key={`${item.setNumber}-${item.position}-${item.songId}`}>
+                        <span className="font-medium text-[var(--text)]">{song?.title ?? item.songId}</span>
+                        {song && <span> - {song.artist}</span>}
                         {song?.bpm != null && <span className="mono"> - {song.bpm} bpm</span>}
-                        <span> - {item.reason}</span>
+                        {reason && <span> - {reason}</span>}
                       </li>
                     );
                   })}
@@ -821,16 +822,15 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     if (!aiAnalysis) return { ok: false, problems: ["No AI recommended order is available."], orderedSets: [] as string[][] };
     const sourceSongs = currentSetSongs;
     const byId = new Map(sourceSongs.map((song) => [song.id, song]));
-    const byIdentity = new Map(sourceSongs.map((song) => [normalizeSongKey(song.title, song.artist), song]));
     const usedIds = new Set<string>();
     const problems: string[] = [];
     const orderedSets: string[][] = Array.from({ length: sets.length }, () => []);
     const ordered = [...aiAnalysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
 
     for (const item of ordered) {
-      const song = item.songId ? byId.get(item.songId) : byIdentity.get(normalizeSongKey(item.title, item.artist));
+      const song = byId.get(item.songId);
       if (!song) {
-        problems.push(`Unknown song: ${item.title} - ${item.artist}`);
+        problems.push(`Unknown songId: ${item.songId}`);
         continue;
       }
       if (usedIds.has(song.id)) {

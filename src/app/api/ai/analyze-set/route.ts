@@ -62,13 +62,11 @@ const aiAnalysisSchema = z.object({
   venueFitNotes: z.array(z.string()).default([]),
   songsToWatch: z.array(z.string()).default([]),
   recommendedOrder: z.array(z.object({
-    songId: z.string().optional(),
+    songId: z.string(),
     setNumber: z.number().int().min(1),
     position: z.number().int().min(1),
-    title: z.string(),
-    artist: z.string(),
-    reason: z.string(),
   })).default([]),
+  orderReasons: z.record(z.string()).default({}),
   recommendedOrderWarning: z.string().nullable().optional(),
   recommendedOrderProblems: z.array(z.string()).default([]),
 });
@@ -158,28 +156,75 @@ function compactClientSongById(input: z.infer<typeof bodySchema>) {
   return new Map(entries.map((song) => [song.songId, song]));
 }
 
-function validateRecommendedOrder(analysis: z.infer<typeof aiAnalysisSchema>, expectedSongIds: string[], numSets: number) {
+function repairRecommendedOrder(
+  analysis: z.infer<typeof aiAnalysisSchema>,
+  expectedSongIds: string[],
+  numSets: number,
+  input: z.infer<typeof bodySchema>,
+) {
   const expected = new Set(expectedSongIds);
   const seen = new Set<string>();
   const problems: string[] = [];
-  for (const item of analysis.recommendedOrder) {
-    if (!item.songId) {
-      problems.push(`Missing songId: ${item.title} - ${item.artist}`);
+  const currentPosition = new Map<string, { setNumber: number; order: number }>();
+  input.sets.forEach((set, setIndex) => {
+    idsForSet(set).forEach((songId, songIndex) => {
+      if (!currentPosition.has(songId)) currentPosition.set(songId, { setNumber: set.index, order: (setIndex * 1000) + songIndex });
+    });
+  });
+  const validItems: Array<{ songId: string; setNumber: number; position: number }> = [];
+
+  for (const item of [...analysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position)) {
+    if (!expected.has(item.songId)) {
+      problems.push(`Unknown songId: ${item.songId}`);
       continue;
     }
-    if (!expected.has(item.songId)) problems.push(`Unknown song: ${item.title} - ${item.artist}`);
-    if (seen.has(item.songId)) problems.push(`Duplicate song: ${item.title} - ${item.artist}`);
-    if (item.setNumber < 1 || item.setNumber > numSets) problems.push(`Invalid set number for ${item.title}: Set ${item.setNumber}`);
+    if (seen.has(item.songId)) {
+      problems.push(`Duplicate songId: ${item.songId}`);
+      continue;
+    }
+    if (item.setNumber < 1 || item.setNumber > numSets) {
+      problems.push(`Invalid set number for songId ${item.songId}: Set ${item.setNumber}`);
+      continue;
+    }
     seen.add(item.songId);
+    validItems.push(item);
   }
-  for (const songId of expected) {
-    if (!seen.has(songId)) problems.push(`Missing songId: ${songId}`);
+
+  if (problems.length > 0) {
+    return {
+      ...analysis,
+      recommendedOrderWarning: "AI returned analysis but the recommended order had invalid song IDs.",
+      recommendedOrderProblems: problems.slice(0, 12),
+    };
   }
-  if (problems.length === 0) return analysis;
+
+  const missingSongIds = expectedSongIds.filter((songId) => !seen.has(songId));
+  if (missingSongIds.length === 0) return analysis;
+
+  const repaired = [...validItems];
+  for (const songId of missingSongIds) {
+    const current = currentPosition.get(songId);
+    repaired.push({
+      songId,
+      setNumber: Math.min(numSets, Math.max(1, current?.setNumber ?? numSets)),
+      position: 1_000_000 + (current?.order ?? 0),
+    });
+  }
+
+  const perSetPosition = new Map<number, number>();
+  const normalized = repaired
+    .sort((a, b) => a.setNumber - b.setNumber || a.position - b.position)
+    .map((item) => {
+      const nextPosition = (perSetPosition.get(item.setNumber) ?? 0) + 1;
+      perSetPosition.set(item.setNumber, nextPosition);
+      return { songId: item.songId, setNumber: item.setNumber, position: nextPosition };
+    });
+
   return {
     ...analysis,
-    recommendedOrderWarning: "AI returned analysis but the recommended order was incomplete.",
-    recommendedOrderProblems: problems.slice(0, 12),
+    recommendedOrder: normalized,
+    recommendedOrderWarning: "AI returned a partial order; missing songs were appended in current order.",
+    recommendedOrderProblems: missingSongIds.slice(0, 12).map((songId) => `Appended missing songId: ${songId}`),
   };
 }
 
@@ -268,7 +313,8 @@ export async function POST(req: Request) {
         "Recommend a complete alternate order using only the songs provided.",
         "Preserve the requested number of sets.",
         "Use every provided song exactly once in recommendedOrder.",
-        "Include songId in each recommendedOrder item.",
+        "Each recommendedOrder item must include only songId, setNumber, and position.",
+        "Put optional notable placement reasons in orderReasons by songId.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
@@ -291,7 +337,25 @@ export async function POST(req: Request) {
           },
           {
             role: "user",
-            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array. Each recommendedOrder item must have songId, setNumber, position, title, artist, reason. Use songId as the primary identifier. Use only provided songs. Do not invent songs. Every selected song must appear exactly once in recommendedOrder. Preserve the selected number of sets. Consider venue, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array, max 1 short reason per ordered song, each reason under 140 characters.\n\n${JSON.stringify(context)}`,
+            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array, orderReasons object.
+
+recommendedOrder rules:
+- Each item must be compact: {"songId":"...","setNumber":1,"position":1}
+- Do not include title, artist, BPM, or reason inside recommendedOrder.
+- recommendedOrder must include every provided songId exactly once.
+- Do not omit songs.
+- Do not invent songIds.
+- Do not stop early.
+- If unsure, still place every song.
+- Preserve the selected number of sets.
+
+orderReasons rules:
+- Optional object keyed by songId.
+- Only include opener, closer, set break transition songs, and top 5 notable placement reasons.
+- Do not provide a reason for every song.
+- Each reason under 140 characters.
+
+Consider venue, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
           },
         ],
         max_output_tokens: 6000,
@@ -346,7 +410,7 @@ export async function POST(req: Request) {
       return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format.", details: validated.error.flatten(), debugRawResponse: rawDebugSnippet(payload) });
     }
 
-    return privateJson({ ok: true, analysis: validateRecommendedOrder(validated.data, orderedIds, input.numSets) });
+    return privateJson({ ok: true, analysis: repairRecommendedOrder(validated.data, orderedIds, input.numSets, input) });
   } catch (error) {
     try {
       return authErrorResponse(error);
