@@ -4,8 +4,13 @@ import { query, querySongsByIds } from "@/lib/db";
 import { getCrowdResponseStats } from "@/lib/recommendations";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const MODEL = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-nano";
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const OPENAI_MODEL = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-nano";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
 const MAX_ANALYSIS_SONGS = 160;
+const SYSTEM_PROMPT = "You are a practical live music setlist analyst. Return only valid JSON. No markdown, comments, or prose outside JSON.";
+
+type AiProvider = "openai" | "anthropic";
 
 const eventType = z.enum(["bar-crowd", "brewery", "restaurant", "outdoor", "private-party", "wedding", "corporate-event"]);
 const compactSongSchema = z.object({
@@ -81,7 +86,7 @@ const aiAnalysisSchema = z.object({
   recommendedOrderProblems: z.array(z.string()).default([]),
 });
 
-function extractResponseText(payload: unknown) {
+function extractOpenAIResponseText(payload: unknown) {
   if (!payload || typeof payload !== "object") return "";
   const direct = (payload as { output_text?: unknown }).output_text;
   if (typeof direct === "string") return direct.trim();
@@ -101,12 +106,63 @@ function extractResponseText(payload: unknown) {
     .trim();
 }
 
+function extractAnthropicResponseText(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const content = (payload as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) =>
+      block &&
+      typeof block === "object" &&
+      (block as { type?: string }).type === "text"
+        ? (block as { text?: string }).text ?? ""
+        : "",
+    )
+    .join("\n")
+    .trim();
+}
+
 function rawDebugSnippet(payload: unknown) {
   try {
     return JSON.stringify(payload, null, 2).slice(0, 1000);
   } catch {
     return String(payload).slice(0, 1000);
   }
+}
+
+function resolveAiProvider(): AiProvider | null {
+  const value = (process.env.AI_PROVIDER || "openai").trim().toLowerCase();
+  if (value === "openai" || value === "anthropic") return value;
+  return null;
+}
+
+function buildAnalysisPrompt(context: unknown) {
+  return `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], orderStrategySummary string, orderChangeSummary object, recommendedOrder array, orderReasons object.
+
+order strategy rules:
+- Evaluate whether a stronger sequence exists.
+- Do not simply return the current order unless it is genuinely the best order.
+- Prefer making meaningful improvements when pacing, opener/closer, vocal fatigue, BPM flow, or venue fit can improve.
+- If keeping the same order, explain why in orderChangeSummary.reason.
+- orderChangeSummary shape: {"changed":true,"songsMoved":0,"reason":"..."}
+
+recommendedOrder rules:
+- Each item must be compact: {"songId":"...","setNumber":1,"position":1}
+- Do not include title, artist, BPM, or reason inside recommendedOrder.
+- recommendedOrder must include every provided songId exactly once.
+- Do not omit songs.
+- Do not invent songIds.
+- Do not stop early.
+- If unsure, still place every song.
+- Preserve the selected number of sets.
+
+orderReasons rules:
+- Optional object keyed by songId.
+- Only include opener, closer, set break transition songs, and top 5 notable placement reasons.
+- Do not provide a reason for every song.
+- Each reason under 140 characters.
+
+Consider venue type, crowd setup, start/end time, time of day, overnightGig, expected audience engagement level, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit, Energy Flow, Recommended Moves, Suggested Opener, or Suggested Closer when relevant. If overnightGig is true, treat the gig as late-night and crossing midnight, with stronger late-set singalong/dance/anthem material when suitable. Venue guidance: Restaurant means conversation-friendly early pacing, gradual energy build, familiar songs, and avoid peaking too early. Outdoor means attention is harder to capture, so familiar songs, singalongs, and a strong opener matter, with energy able to ramp sooner. Bar Crowd can handle higher energy earlier. Brewery should feel casual/social and build engagement through the night. Private Party should balance familiarity and variety. Wedding should prioritize broad familiarity, danceability, and singalong moments. Corporate Event should use conservative early pacing and broad appeal. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`;
 }
 
 function parseJsonText(text: string) {
@@ -268,9 +324,13 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-    const apiKey = process.env.OPENAI_API_KEY;
+    const provider = resolveAiProvider();
+    if (!provider) {
+      return privateJson({ ok: false, error: `Unsupported AI_PROVIDER: ${process.env.AI_PROVIDER}` }, { status: 400 });
+    }
+    const apiKey = provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return privateJson({ ok: false, error: "OPENAI_API_KEY is not configured" });
+      return privateJson({ ok: false, error: provider === "anthropic" ? "ANTHROPIC_API_KEY is not configured" : "OPENAI_API_KEY is not configured" });
     }
 
     const json = await req.json();
@@ -367,58 +427,55 @@ export async function POST(req: Request) {
       ],
     };
 
-    const response = await fetch(OPENAI_RESPONSES_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        reasoning: { effort: "low" },
-        input: [
-          {
-            role: "system",
-            content: "You are a practical live music setlist analyst. Return only valid JSON. No markdown, comments, or prose outside JSON.",
-          },
-          {
-            role: "user",
-            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], orderStrategySummary string, orderChangeSummary object, recommendedOrder array, orderReasons object.
-
-order strategy rules:
-- Evaluate whether a stronger sequence exists.
-- Do not simply return the current order unless it is genuinely the best order.
-- Prefer making meaningful improvements when pacing, opener/closer, vocal fatigue, BPM flow, or venue fit can improve.
-- If keeping the same order, explain why in orderChangeSummary.reason.
-- orderChangeSummary shape: {"changed":true,"songsMoved":0,"reason":"..."}
-
-recommendedOrder rules:
-- Each item must be compact: {"songId":"...","setNumber":1,"position":1}
-- Do not include title, artist, BPM, or reason inside recommendedOrder.
-- recommendedOrder must include every provided songId exactly once.
-- Do not omit songs.
-- Do not invent songIds.
-- Do not stop early.
-- If unsure, still place every song.
-- Preserve the selected number of sets.
-
-orderReasons rules:
-- Optional object keyed by songId.
-- Only include opener, closer, set break transition songs, and top 5 notable placement reasons.
-- Do not provide a reason for every song.
-- Each reason under 140 characters.
-
-Consider venue type, crowd setup, start/end time, time of day, overnightGig, expected audience engagement level, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit, Energy Flow, Recommended Moves, Suggested Opener, or Suggested Closer when relevant. If overnightGig is true, treat the gig as late-night and crossing midnight, with stronger late-set singalong/dance/anthem material when suitable. Venue guidance: Restaurant means conversation-friendly early pacing, gradual energy build, familiar songs, and avoid peaking too early. Outdoor means attention is harder to capture, so familiar songs, singalongs, and a strong opener matter, with energy able to ramp sooner. Bar Crowd can handle higher energy earlier. Brewery should feel casual/social and build engagement through the night. Private Party should balance familiarity and variety. Wedding should prioritize broad familiarity, danceability, and singalong moments. Corporate Event should use conservative early pacing and broad appeal. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
-          },
-        ],
-        max_output_tokens: 6000,
-      }),
-    });
+    const prompt = buildAnalysisPrompt(context);
+    const response = provider === "anthropic"
+      ? await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 6000,
+          system: SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+        }),
+      })
+      : await fetch(OPENAI_RESPONSES_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          reasoning: { effort: "low" },
+          input: [
+            {
+              role: "system",
+              content: SYSTEM_PROMPT,
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          max_output_tokens: 6000,
+        }),
+      });
 
     const payload = await response.json().catch(() => null);
-    console.info("OpenAI analyze-set raw response", payload);
-    console.info("OpenAI analyze-set response.output", payload && typeof payload === "object" ? (payload as { output?: unknown }).output : undefined);
-    console.info("OpenAI analyze-set response.output_text", payload && typeof payload === "object" ? (payload as { output_text?: unknown }).output_text : undefined);
+    const providerLabel = provider === "anthropic" ? "Anthropic" : "OpenAI";
+    console.info(`${providerLabel} analyze-set raw response`, payload);
+    console.info(`${providerLabel} analyze-set response.output`, payload && typeof payload === "object" ? (payload as { output?: unknown }).output : undefined);
+    console.info(`${providerLabel} analyze-set response.output_text`, payload && typeof payload === "object" ? (payload as { output_text?: unknown }).output_text : undefined);
     if (payload && typeof payload === "object") {
       const output = (payload as { output?: unknown }).output;
       if (Array.isArray(output)) {
@@ -427,18 +484,19 @@ Consider venue type, crowd setup, start/end time, time of day, overnightGig, exp
           const content = (item as { content?: unknown }).content;
           return Array.isArray(content) ? content : [];
         });
-        console.info("OpenAI analyze-set content blocks", contentBlocks);
+        console.info(`${providerLabel} analyze-set content blocks`, contentBlocks);
       }
+      if (provider === "anthropic") console.info("Anthropic analyze-set content blocks", (payload as { content?: unknown }).content);
     }
     if (!response.ok) {
       const error =
         payload && typeof payload === "object" && "error" in payload
           ? (payload as { error?: { message?: string } }).error?.message
           : null;
-      return privateJson({ ok: false, error: error || `OpenAI analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) });
+      return privateJson({ ok: false, error: error || `${providerLabel} analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) });
     }
 
-    if (payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {
+    if (provider === "openai" && payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {
       const incompleteDetails = (payload as { incomplete_details?: { reason?: unknown } }).incomplete_details;
       return privateJson({
         ok: false,
@@ -447,20 +505,28 @@ Consider venue type, crowd setup, start/end time, time of day, overnightGig, exp
         debugRawResponse: rawDebugSnippet(payload),
       });
     }
+    if (provider === "anthropic" && payload && typeof payload === "object" && (payload as { stop_reason?: unknown }).stop_reason === "max_tokens") {
+      return privateJson({
+        ok: false,
+        error: "AI analysis was too long to complete. Try again or use fewer songs.",
+        incompleteReason: "max_tokens",
+        debugRawResponse: rawDebugSnippet(payload),
+      });
+    }
 
-    const text = extractResponseText(payload);
-    if (!text) return privateJson({ ok: false, error: "OpenAI returned no final analysis text.", debugRawResponse: rawDebugSnippet(payload) });
+    const text = provider === "anthropic" ? extractAnthropicResponseText(payload) : extractOpenAIResponseText(payload);
+    if (!text) return privateJson({ ok: false, error: `${providerLabel} returned no final analysis text.`, debugRawResponse: rawDebugSnippet(payload) });
 
     let analysis: unknown;
     try {
       analysis = parseJsonText(text);
     } catch {
-      return privateJson({ ok: false, error: "OpenAI returned analysis that was not valid JSON.", debugRawResponse: rawDebugSnippet(payload) });
+      return privateJson({ ok: false, error: `${providerLabel} returned analysis that was not valid JSON.`, debugRawResponse: rawDebugSnippet(payload) });
     }
 
     const validated = aiAnalysisSchema.safeParse(analysis);
     if (!validated.success) {
-      return privateJson({ ok: false, error: "OpenAI returned analysis in an unexpected format.", details: validated.error.flatten(), debugRawResponse: rawDebugSnippet(payload) });
+      return privateJson({ ok: false, error: `${providerLabel} returned analysis in an unexpected format.`, details: validated.error.flatten(), debugRawResponse: rawDebugSnippet(payload) });
     }
 
     return privateJson({ ok: true, analysis: repairRecommendedOrder(validated.data, orderedIds, input.numSets, input) });
