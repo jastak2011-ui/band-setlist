@@ -26,6 +26,7 @@ type Song = {
   closerCandidate?: boolean | null;
   notes?: string | null;
   capoOrTuning?: string | null;
+  lockedWithNext?: boolean;
   performanceRating?: {
     crowdResponseScore: number | null;
     notes: string | null;
@@ -218,17 +219,98 @@ function renumberSets(sets: Detail["sets"]) {
   return sets.map((set, index) => ({ ...set, index: index + 1 }));
 }
 
+function normalizeLockedSongs(songs: Song[]) {
+  return songs.map((song, index) => ({ ...song, lockedWithNext: index < songs.length - 1 ? Boolean(song.lockedWithNext) : false }));
+}
+
+function normalizeLockedSets(sets: Detail["sets"]) {
+  return sets.map((set) => ({ ...set, songs: normalizeLockedSongs(set.songs) }));
+}
+
+function medleyGroupBounds(songs: Song[], songIndex: number) {
+  let start = songIndex;
+  while (start > 0 && songs[start - 1]?.lockedWithNext) start -= 1;
+  let end = songIndex;
+  while (end < songs.length - 1 && songs[end]?.lockedWithNext) end += 1;
+  return { start, end, size: end - start + 1 };
+}
+
+function medleyGroupsForSet(set: { index: number; songs: Song[] }) {
+  const groups: Array<{ groupId: string; songIds: string[]; title: string }> = [];
+  let index = 0;
+  while (index < set.songs.length) {
+    const bounds = medleyGroupBounds(set.songs, index);
+    if (bounds.size > 1) {
+      const groupSongs = set.songs.slice(bounds.start, bounds.end + 1);
+      groups.push({
+        groupId: `set-${set.index}-medley-${bounds.start + 1}`,
+        songIds: groupSongs.map((song) => song.id),
+        title: groupSongs.map((song) => song.title).join(" / "),
+      });
+    }
+    index = bounds.end + 1;
+  }
+  return groups;
+}
+
+function lockedGroupsForSets(sets: Detail["sets"]) {
+  return sets.flatMap(medleyGroupsForSet);
+}
+
+function setPayload(sets: Detail["sets"]) {
+  return normalizeLockedSets(sets).map((set) => set.songs.map((song, index) => ({
+    songId: song.id,
+    lockedWithNext: index < set.songs.length - 1 ? Boolean(song.lockedWithNext) : false,
+  })));
+}
+
+function blockifySongs(songs: Song[]) {
+  const blocks: Song[][] = [];
+  let index = 0;
+  while (index < songs.length) {
+    const bounds = medleyGroupBounds(songs, index);
+    blocks.push(songs.slice(bounds.start, bounds.end + 1));
+    index = bounds.end + 1;
+  }
+  return blocks;
+}
+
+function songsFromBlocks(blocks: Song[][]) {
+  return normalizeLockedSongs(blocks.flat());
+}
+
+function shuffleSongBlocks(songs: Song[]) {
+  return songsFromBlocks(shuffleSongs(blockifySongs(songs)));
+}
+
+function findBlockIndexBySongIndex(blocks: Song[][], songIndex: number) {
+  let cursor = 0;
+  for (let index = 0; index < blocks.length; index++) {
+    const size = blocks[index].length;
+    if (songIndex >= cursor && songIndex < cursor + size) return index;
+    cursor += size;
+  }
+  return -1;
+}
+
+function blockInsertIndexForSongIndex(blocks: Song[][], songIndex: number | "end") {
+  if (songIndex === "end") return blocks.length;
+  const index = findBlockIndexBySongIndex(blocks, songIndex);
+  return index < 0 ? blocks.length : index;
+}
+
 function splitSongsEvenlyByCount(songs: Song[], count: number) {
   const setCount = Math.max(1, Math.min(4, count));
-  const base = Math.floor(songs.length / setCount);
-  const remainder = songs.length % setCount;
+  const blocks = blockifySongs(songs);
+  const base = Math.floor(blocks.length / setCount);
+  const remainder = blocks.length % setCount;
   let cursor = 0;
-  return Array.from({ length: setCount }, (_, index) => {
+  return normalizeLockedSets(Array.from({ length: setCount }, (_, index) => {
     const size = base + (index < remainder ? 1 : 0);
-    const nextSongs = songs.slice(cursor, cursor + size);
+    const nextSongs = blocks.slice(cursor, cursor + size).flat();
     cursor += size;
     return { index: index + 1, songs: nextSongs };
-  });
+  }));
 }
 
 function splitSongsEvenlyByDuration(songs: Song[], count: number) {
@@ -240,25 +322,27 @@ function splitSongsEvenlyByDuration(songs: Song[], count: number) {
   let setIndex = 0;
   let currentSeconds = 0;
 
-  songs.forEach((song, songIndex) => {
-    const remainingSongs = songs.length - songIndex;
+  const blocks = blockifySongs(songs);
+  blocks.forEach((block, blockIndex) => {
+    const blockSeconds = totalDuration(block);
+    const remainingBlocks = blocks.length - blockIndex;
     const remainingSets = setCount - setIndex;
     const shouldStartNextSet =
       sets[setIndex].songs.length > 0 &&
       setIndex < setCount - 1 &&
-      remainingSongs > remainingSets &&
-      currentSeconds + (song.durationSec ?? 0) > targetSeconds;
+      remainingBlocks > remainingSets &&
+      currentSeconds + blockSeconds > targetSeconds;
 
     if (shouldStartNextSet) {
       setIndex += 1;
       currentSeconds = 0;
     }
 
-    sets[setIndex].songs.push(song);
-    currentSeconds += song.durationSec ?? 0;
+    sets[setIndex].songs.push(...block);
+    currentSeconds += blockSeconds;
   });
 
-  return sets;
+  return normalizeLockedSets(sets);
 }
 
 function filenameFromDisposition(disposition: string | null) {
@@ -272,7 +356,7 @@ function SongPerformanceRating({ song, busy, onSave }: { song: Song; busy: boole
   const currentScore = song.performanceRating?.crowdResponseScore ?? null;
 
   return (
-    <div className="col-start-3 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
+    <div className="col-start-4 col-span-2 rounded-lg border border-[var(--border)] bg-black/10 px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-[var(--text)]">Crowd Response</span>
         {crowdRatingOptions.map((option) => {
@@ -512,8 +596,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         return;
       }
       setLoadError(null);
-      setData(detailJson);
-      setSets(detailJson.sets);
+      const normalizedDetail = { ...detailJson, sets: normalizeLockedSets(detailJson.sets) };
+      setData(normalizedDetail);
+      setSets(normalizedDetail.sets);
       setSongs(songsJson);
       setRecommendedSongs([]);
       setReplacementCursor(0);
@@ -591,7 +676,12 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function reshuffleAll() {
     if (sets.length === 0) return;
-    setSets(redistributeSongs(shuffleSongs(sets.flatMap((set) => set.songs)), sets.length));
+    const shuffledBlocks = shuffleSongs(sets.flatMap((set) => blockifySongs(set.songs)));
+    const nextSets = Array.from({ length: sets.length }, (_, index) => ({ index: index + 1, songs: [] as Song[] }));
+    shuffledBlocks.forEach((block, index) => {
+      nextSets[index % nextSets.length].songs.push(...block);
+    });
+    setSets(normalizeLockedSets(nextSets));
     setDirty(true);
     setAiAnalysis(null);
     setMsg("Setlist reshuffled. Save the order when it feels right.");
@@ -599,7 +689,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function reshuffleSet(setIndex: number) {
     setSets((current) =>
-      current.map((set) => (set.index === setIndex ? { ...set, songs: shuffleSongs(set.songs) } : set)),
+      current.map((set) => (set.index === setIndex ? { ...set, songs: shuffleSongBlocks(set.songs) } : set)),
     );
     setDirty(true);
     setAiAnalysis(null);
@@ -626,13 +716,29 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setSets((current) =>
       current.map((set) => {
         if (set.index !== setIndex) return set;
-        return { ...set, songs: set.songs.filter((_, index) => index !== songIndex) };
+        return { ...set, songs: normalizeLockedSongs(set.songs.filter((_, index) => index !== songIndex)) };
       }),
     );
     setDirty(true);
     setAiAnalysis(null);
     setReplacementPrompt(null);
     setMsg(`Removed ${song.title}. Save changes to persist.`);
+  }
+
+  function toggleLockWithNext(setIndex: number, songIndex: number) {
+    setSets((current) =>
+      normalizeLockedSets(current.map((set) => {
+        if (set.index !== setIndex || songIndex >= set.songs.length - 1) return set;
+        const nextSongs = set.songs.map((song, index) => (
+          index === songIndex ? { ...song, lockedWithNext: !song.lockedWithNext } : song
+        ));
+        return { ...set, songs: nextSongs };
+      })),
+    );
+    setDirty(true);
+    setAiAnalysis(null);
+    setReplacementPrompt(null);
+    setMsg("Medley lock updated. Save changes to persist.");
   }
 
   function applySplitIntoSetCount(mode: "count" | "duration") {
@@ -650,18 +756,23 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   }
 
   function addSetBreakAfter(setIndex: number, songIndex: number) {
+    const sourceSet = sets.find((set) => set.index === setIndex);
+    if (sourceSet?.songs[songIndex]?.lockedWithNext) {
+      setMsg("Cannot add a set break inside a locked medley group.");
+      return;
+    }
     setSets((current) => {
       const setPosition = current.findIndex((set) => set.index === setIndex);
       const source = current[setPosition];
       if (!source || songIndex >= source.songs.length - 1) return current;
       const beforeBreak = source.songs.slice(0, songIndex + 1);
       const afterBreak = source.songs.slice(songIndex + 1);
-      return renumberSets([
+      return normalizeLockedSets(renumberSets([
         ...current.slice(0, setPosition),
         { ...source, songs: beforeBreak },
         { index: source.index + 1, songs: afterBreak },
         ...current.slice(setPosition + 1),
-      ]);
+      ]));
     });
     setDirty(true);
     setAiAnalysis(null);
@@ -675,11 +786,11 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       if (setPosition <= 0) return current;
       const previous = current[setPosition - 1];
       const target = current[setPosition];
-      return renumberSets([
+      return normalizeLockedSets(renumberSets([
         ...current.slice(0, setPosition - 1),
         { ...previous, songs: [...previous.songs, ...target.songs] },
         ...current.slice(setPosition + 1),
-      ]);
+      ]));
     });
     setDirty(true);
     setAiAnalysis(null);
@@ -696,21 +807,29 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     }
     const alreadyInSetlist = sets.some((set) => set.songs.some((item) => item.id === song.id));
     if (alreadyInSetlist && !window.confirm("This song is already in the setlist. Add it again?")) return;
+    const currentTargetSet = sets.find((set) => set.index === addSongSetIndex) ?? sets[0];
+    const requestedPosition = addSongPosition ? Number(addSongPosition) : (currentTargetSet?.songs.length ?? 0) + 1;
+    const insertIndex = currentTargetSet && Number.isFinite(requestedPosition)
+      ? Math.max(0, Math.min(currentTargetSet.songs.length, Math.round(requestedPosition) - 1))
+      : currentTargetSet?.songs.length ?? 0;
+    if (currentTargetSet && insertIndex > 0 && currentTargetSet.songs[insertIndex - 1]?.lockedWithNext) {
+      setMsg("Cannot add a song inside a locked medley group.");
+      return;
+    }
 
     setAddingSong(true);
     setSets((current) => {
       const targetSet = current.find((set) => set.index === addSongSetIndex) ?? current[0];
       if (!targetSet) return current;
-      const requestedPosition = addSongPosition ? Number(addSongPosition) : targetSet.songs.length + 1;
-      const insertIndex = Number.isFinite(requestedPosition)
+      const nextInsertIndex = Number.isFinite(requestedPosition)
         ? Math.max(0, Math.min(targetSet.songs.length, Math.round(requestedPosition) - 1))
         : targetSet.songs.length;
-      return current.map((set) => {
+      return normalizeLockedSets(current.map((set) => {
         if (set.index !== targetSet.index) return set;
         const nextSongs = [...set.songs];
-        nextSongs.splice(insertIndex, 0, song);
+        nextSongs.splice(nextInsertIndex, 0, song);
         return { ...set, songs: nextSongs };
-      });
+      }));
     });
     setDirty(true);
     setAiAnalysis(null);
@@ -763,18 +882,23 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function moveSong(setIndex: number, songIndex: number, direction: -1 | 1) {
     setSets((current) => {
-      const next = current.map((set) => ({ ...set, songs: [...set.songs] }));
+      const next = current.map((set) => ({ ...set, songs: normalizeLockedSongs(set.songs) }));
       const sourceSetPosition = next.findIndex((set) => set.index === setIndex);
       const source = next[sourceSetPosition];
       if (!source) return current;
+      const blocks = blockifySongs(source.songs);
+      const blockIndex = findBlockIndexBySongIndex(blocks, songIndex);
+      if (blockIndex < 0) return current;
 
-      if (direction === -1 && songIndex > 0) {
-        [source.songs[songIndex - 1], source.songs[songIndex]] = [source.songs[songIndex], source.songs[songIndex - 1]];
+      if (direction === -1 && blockIndex > 0) {
+        [blocks[blockIndex - 1], blocks[blockIndex]] = [blocks[blockIndex], blocks[blockIndex - 1]];
+        source.songs = songsFromBlocks(blocks);
         return next;
       }
 
-      if (direction === 1 && songIndex < source.songs.length - 1) {
-        [source.songs[songIndex], source.songs[songIndex + 1]] = [source.songs[songIndex + 1], source.songs[songIndex]];
+      if (direction === 1 && blockIndex < blocks.length - 1) {
+        [blocks[blockIndex], blocks[blockIndex + 1]] = [blocks[blockIndex + 1], blocks[blockIndex]];
+        source.songs = songsFromBlocks(blocks);
         return next;
       }
 
@@ -782,11 +906,14 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       const target = next[targetSetPosition];
       if (!target) return current;
 
-      const [song] = source.songs.splice(songIndex, 1);
-      if (!song) return current;
-      if (direction === -1) target.songs.push(song);
-      else target.songs.unshift(song);
-      return next;
+      const [block] = blocks.splice(blockIndex, 1);
+      if (!block) return current;
+      source.songs = songsFromBlocks(blocks);
+      const targetBlocks = blockifySongs(target.songs);
+      if (direction === -1) targetBlocks.push(block);
+      else targetBlocks.unshift(block);
+      target.songs = songsFromBlocks(targetBlocks);
+      return normalizeLockedSets(next);
     });
 
     setReplacementPrompt(null);
@@ -800,15 +927,21 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setSets((current) => {
       if (!current.some((set) => set.index === targetSetIndex)) return current;
 
-      const next = current.map((set) => ({ ...set, songs: [...set.songs] }));
+      const next = current.map((set) => ({ ...set, songs: normalizeLockedSongs(set.songs) }));
       const source = next.find((set) => set.index === setIndex);
       const target = next.find((set) => set.index === targetSetIndex);
       if (!source || !target) return current;
 
-      const [song] = source.songs.splice(songIndex, 1);
-      if (!song) return current;
-      target.songs.push(song);
-      return next;
+      const sourceBlocks = blockifySongs(source.songs);
+      const blockIndex = findBlockIndexBySongIndex(sourceBlocks, songIndex);
+      if (blockIndex < 0) return current;
+      const [block] = sourceBlocks.splice(blockIndex, 1);
+      if (!block) return current;
+      source.songs = songsFromBlocks(sourceBlocks);
+      const targetBlocks = blockifySongs(target.songs);
+      targetBlocks.push(block);
+      target.songs = songsFromBlocks(targetBlocks);
+      return normalizeLockedSets(next);
     });
     setDirty(true);
     setAiAnalysis(null);
@@ -817,19 +950,23 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function moveDraggedSong(source: DragLocation, target: DragLocation | { setIndex: number; songIndex: "end" }) {
     setSets((current) => {
-      const next = current.map((set) => ({ ...set, songs: [...set.songs] }));
+      const next = current.map((set) => ({ ...set, songs: normalizeLockedSongs(set.songs) }));
       const sourceSet = next.find((set) => set.index === source.setIndex);
       const targetSet = next.find((set) => set.index === target.setIndex);
       if (!sourceSet || !targetSet) return current;
-      const [song] = sourceSet.songs.splice(source.songIndex, 1);
-      if (!song) return current;
+      const sourceBlocks = blockifySongs(sourceSet.songs);
+      const sourceBlockIndex = findBlockIndexBySongIndex(sourceBlocks, source.songIndex);
+      if (sourceBlockIndex < 0) return current;
+      const [block] = sourceBlocks.splice(sourceBlockIndex, 1);
+      if (!block) return current;
+      sourceSet.songs = songsFromBlocks(sourceBlocks);
 
-      let insertIndex = target.songIndex === "end" ? targetSet.songs.length : target.songIndex;
-      if (source.setIndex === target.setIndex && target.songIndex !== "end" && source.songIndex < target.songIndex) {
-        insertIndex -= 1;
-      }
-      targetSet.songs.splice(Math.max(0, insertIndex), 0, song);
-      return next;
+      const targetBlocks = blockifySongs(targetSet.songs);
+      let insertBlockIndex = blockInsertIndexForSongIndex(targetBlocks, target.songIndex);
+      if (target.songIndex !== "end" && source.setIndex === target.setIndex && sourceBlockIndex < insertBlockIndex) insertBlockIndex -= 1;
+      targetBlocks.splice(Math.max(0, insertBlockIndex), 0, block);
+      targetSet.songs = songsFromBlocks(targetBlocks);
+      return normalizeLockedSets(next);
     });
     setDirty(true);
     setAiAnalysis(null);
@@ -856,7 +993,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     const r = await fetch(`/api/setlists/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sets: sets.map((set) => set.songs.map((song) => song.id)) }),
+      body: JSON.stringify({ sets: setPayload(sets) }),
     });
     const json = await r.json().catch(() => null);
     setBusy(false);
@@ -867,8 +1004,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     }
 
     if (json?.sets) {
-      setData(json);
-      setSets(json.sets);
+      const normalizedDetail = { ...json, sets: normalizeLockedSets(json.sets) } as Detail;
+      setData(normalizedDetail);
+      setSets(normalizedDetail.sets);
     }
     setDirty(false);
     setReplacementPrompt(null);
@@ -901,6 +1039,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           startTime: data.setlist.startTime ?? undefined,
           endTime: data.setlist.endTime ?? undefined,
           numSets: sets.length,
+          lockedGroups: lockedGroupsForSets(sets),
           sets: sets.map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) })),
         }),
       });
@@ -945,12 +1084,12 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   }
 
   function validateAiRecommendedOrder() {
-    if (!aiAnalysis) return { ok: false, problems: ["No AI recommended order is available."], orderedSets: [] as string[][] };
+    if (!aiAnalysis) return { ok: false, problems: ["No AI recommended order is available."], orderedSets: [] as ReturnType<typeof setPayload> };
     const sourceSongs = currentSetSongs;
     const byId = new Map(sourceSongs.map((song) => [song.id, song]));
     const usedIds = new Set<string>();
     const problems: string[] = [];
-    const orderedSets: string[][] = Array.from({ length: sets.length }, () => []);
+    const orderedSets: Song[][] = Array.from({ length: sets.length }, () => []);
     const ordered = [...aiAnalysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
 
     for (const item of ordered) {
@@ -968,7 +1107,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         continue;
       }
       usedIds.add(song.id);
-      orderedSets[item.setNumber - 1].push(song.id);
+      orderedSets[item.setNumber - 1].push(song);
     }
 
     for (const song of sourceSongs) {
@@ -976,7 +1115,34 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     }
     if (usedIds.size !== sourceSongs.length) problems.push(`Expected ${sourceSongs.length} songs, but AI returned ${usedIds.size} unique matching song${usedIds.size === 1 ? "" : "s"}.`);
 
-    return { ok: problems.length === 0, problems, orderedSets };
+    if (problems.length > 0) return { ok: false, problems, orderedSets: [] as ReturnType<typeof setPayload> };
+
+    const repairedSets = normalizeLockedSets(orderedSets.map((songs, index) => ({ index: index + 1, songs: songs.map((song) => ({ ...song, lockedWithNext: false })) })));
+    const repairWarnings: string[] = [];
+    for (const group of lockedGroupsForSets(sets)) {
+      const groupIds = group.songIds;
+      let firstSetIndex = -1;
+      let firstSongIndex = Number.POSITIVE_INFINITY;
+      repairedSets.forEach((set, setIndex) => {
+        set.songs.forEach((song, songIndex) => {
+          if (groupIds.includes(song.id) && (firstSetIndex === -1 || setIndex < firstSetIndex || (setIndex === firstSetIndex && songIndex < firstSongIndex))) {
+            firstSetIndex = setIndex;
+            firstSongIndex = songIndex;
+          }
+        });
+      });
+      if (firstSetIndex === -1) continue;
+      const groupSongs = groupIds.map((songId) => sourceSongs.find((song) => song.id === songId)).filter((song): song is Song => Boolean(song));
+      repairedSets.forEach((set) => {
+        set.songs = set.songs.filter((song) => !groupIds.includes(song.id));
+      });
+      const targetSongs = repairedSets[firstSetIndex].songs;
+      const insertIndex = Math.min(firstSongIndex, targetSongs.length);
+      targetSongs.splice(insertIndex, 0, ...groupSongs.map((song, index) => ({ ...song, lockedWithNext: index < groupSongs.length - 1 })));
+      repairWarnings.push(`Kept medley locked: ${group.title}`);
+    }
+    const normalized = normalizeLockedSets(repairedSets);
+    return { ok: true, problems: repairWarnings, orderedSets: setPayload(normalized) };
   }
 
   async function applyAiRecommendedOrder() {
@@ -1001,12 +1167,13 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
       return;
     }
     const detail = json as Detail;
-    setData(detail);
-    setSets(detail.sets);
+    const normalizedDetail = { ...detail, sets: normalizeLockedSets(detail.sets) };
+    setData(normalizedDetail);
+    setSets(normalizedDetail.sets);
     setDirty(false);
     setReplacementPrompt(null);
     setAiAnalysis(null);
-    setMsg("AI recommended order applied.");
+    setMsg(validation.problems.length > 0 ? `AI recommended order applied. ${validation.problems.slice(0, 3).join("; ")}` : "AI recommended order applied.");
   }
 
   async function saveRating(setIndex: number, songIndex: number, song: Song, score: number | null, notes: string | null) {
@@ -1144,7 +1311,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   function resetOrder() {
     if (!data) return;
-    setSets(data.sets);
+    setSets(normalizeLockedSets(data.sets));
     setDirty(false);
     setAiAnalysis(null);
     setReplacementPrompt(null);
@@ -1400,10 +1567,14 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               const promptIsList = promptIsOpen && replacementPrompt.mode === "list";
               const isDragging = draggedSong?.setIndex === s.index && draggedSong.songIndex === songIndex;
               const isDropTarget = dragOverSong?.setIndex === s.index && dragOverSong.songIndex === songIndex;
+              const groupBounds = medleyGroupBounds(s.songs, songIndex);
+              const isInMedley = groupBounds.size > 1;
+              const isMedleyStart = isInMedley && groupBounds.start === songIndex;
+              const isMedleyContinuation = isInMedley && groupBounds.start < songIndex;
               return (
                 <li
                   key={`${s.index}-${song.id}-${songIndex}`}
-                  className={`grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 rounded-lg px-2 py-1 transition hover:bg-[#0f131a] ${isDragging ? "opacity-50 ring-1 ring-[var(--accent)]" : ""} ${isDropTarget ? "border-t-2 border-[var(--accent)] bg-[#0f131a]" : ""}`}
+                  className={`grid grid-cols-[auto_auto_auto_1fr_auto] items-center gap-3 rounded-lg px-2 py-1 transition hover:bg-[#0f131a] ${isInMedley ? "border-l-2 border-[var(--accent)] bg-[#0f131a]/40" : ""} ${isDragging ? "opacity-50 ring-1 ring-[var(--accent)]" : ""} ${isDropTarget ? "border-t-2 border-[var(--accent)] bg-[#0f131a]" : ""}`}
                   onDragOver={(event) => {
                     if (!draggedSong) return;
                     event.preventDefault();
@@ -1419,6 +1590,15 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                     handleDrop({ setIndex: s.index, songIndex });
                   }}
                 >
+                  <button
+                    type="button"
+                    className={`btn h-7 px-2 py-0 text-xs ${song.lockedWithNext ? "btn-primary" : "btn-ghost"}`}
+                    disabled={songIndex >= s.songs.length - 1}
+                    onClick={() => toggleLockWithNext(s.index, songIndex)}
+                    title={song.lockedWithNext ? "Unlock this song from the next song" : "Lock this song to the next song"}
+                  >
+                    Link
+                  </button>
                   <span className="mono text-xs text-[var(--muted)]">{songIndex + 1}</span>
                   <span
                     role="button"
@@ -1442,6 +1622,8 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                   <span>
                     {song.title} <span className="text-[var(--muted)]">- {song.artist}</span>
                     {song.bpm != null && <span className="mono text-xs text-[var(--muted)]"> ({song.bpm} bpm)</span>}
+                    {isMedleyStart && <span className="ml-2 rounded border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]">Medley group</span>}
+                    {isMedleyContinuation && <span className="ml-2 rounded border border-[var(--border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--muted)]">Medley locked</span>}
                   </span>
                   <span className="flex flex-wrap justify-end gap-1">
                     <button
@@ -1500,15 +1682,16 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
                       <button
                         type="button"
                         className="btn btn-ghost h-7 px-2 py-0 text-xs"
+                        disabled={Boolean(song.lockedWithNext)}
                         onClick={() => addSetBreakAfter(s.index, songIndex)}
-                        title="Create a new set starting with the next song"
+                        title={song.lockedWithNext ? "Unlock this medley link before adding a set break here" : "Create a new set starting with the next song"}
                       >
                         Add Set Break After
                       </button>
                     )}
                   </span>
                   {promptIsOpen && (
-                    <div className="col-start-3 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
+                    <div className="col-start-4 col-span-2 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--border)] pt-2">
                       <button
                         type="button"
                         className="btn btn-primary h-8 px-3 py-0 text-xs"

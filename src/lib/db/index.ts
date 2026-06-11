@@ -143,6 +143,7 @@ async function bootstrapDatabase(db: Queryable) {
       set_id TEXT NOT NULL REFERENCES setlist_sets(id) ON DELETE CASCADE,
       song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
       position INTEGER NOT NULL,
+      locked_with_next BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -261,6 +262,7 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "setlist_sets", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "setlist_set_songs", "locked_with_next", "BOOLEAN NOT NULL DEFAULT FALSE");
   await addColumnIfMissing(db, "app_users", "display_name", "TEXT");
   await addColumnIfMissing(db, "app_users", "disabled_at", "TIMESTAMPTZ");
   await addColumnIfMissing(db, "app_users", "last_seen_at", "TIMESTAMPTZ");

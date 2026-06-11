@@ -51,6 +51,11 @@ const bodySchema = z.object({
   endTime: z.string().optional(),
   numSets: z.number().int().min(1).max(12),
   targetDurationSec: z.number().int().positive().optional(),
+  lockedGroups: z.array(z.object({
+    groupId: z.string(),
+    songIds: z.array(z.string()).min(2),
+    title: z.string(),
+  })).optional(),
   sets: z.array(z.object({
     index: z.number().int().min(1),
     songIds: z.array(z.string()).min(1).optional(),
@@ -179,6 +184,7 @@ recommendedOrder rules:
 - Do not stop early.
 - If unsure, still place every song.
 - Preserve the selected number of sets.
+- Locked groups represent medleys or required transitions. Do not split locked groups. Keep songs in each locked group adjacent. Preserve their internal order. Treat each locked group as one sequencing unit.
 
 orderReasons rules:
 - Optional object keyed by songId.
@@ -432,6 +438,7 @@ export async function POST(req: Request) {
       targetDurationSec: input.targetDurationSec ?? null,
       songCountSent: includedCount,
       songCountTotal: orderedIds.length,
+      lockedGroups: input.lockedGroups ?? [],
       sets,
       instructions: [
         "Analyze only. Recommend an alternate order, but do not claim the setlist has been changed.",
@@ -448,6 +455,7 @@ export async function POST(req: Request) {
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
+        "Locked groups are medleys or required transitions. Never split them; preserve internal order and keep the songs adjacent.",
       ],
     };
 

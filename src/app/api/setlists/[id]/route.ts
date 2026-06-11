@@ -5,13 +5,21 @@ import { newId } from "@/lib/ids";
 
 type Params = { params: Promise<{ id: string }> };
 
+const setSongItem = z.union([
+  z.string(),
+  z.object({
+    songId: z.string(),
+    lockedWithNext: z.boolean().optional(),
+  }),
+]);
+
 const patchBody = z.object({
   bandId: z.string().nullable().optional(),
   title: z.string().max(200).nullable().optional(),
   performedAt: z.string().nullable().optional(),
   startTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   endTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
-  sets: z.array(z.array(z.string()).min(0)).min(1).optional(),
+  sets: z.array(z.array(setSongItem).min(0)).min(1).optional(),
 });
 
 function timesAreValid(startTime: string | null | undefined, endTime: string | null | undefined) {
@@ -51,7 +59,7 @@ async function getSetlistDetail(id: string) {
   const outSets = [];
   for (const set of setResult.rows) {
     const linkResult = await query(
-      "SELECT position, song_id FROM setlist_set_songs WHERE set_id = $1 ORDER BY position",
+      "SELECT position, song_id, locked_with_next FROM setlist_set_songs WHERE set_id = $1 ORDER BY position",
       [set.id],
     );
     const ids = linkResult.rows.map((row) => row.song_id as string);
@@ -62,7 +70,7 @@ async function getSetlistDetail(id: string) {
       songs: linkResult.rows
         .map((row) => {
           const song = songMap.get(row.song_id);
-          return song ? { ...song, performanceRating: ratingsBySong.get(song.id) ?? null } : null;
+          return song ? { ...song, lockedWithNext: Boolean(row.locked_with_next), performanceRating: ratingsBySong.get(song.id) ?? null } : null;
         })
         .filter(Boolean),
     });
@@ -154,11 +162,14 @@ export async function PATCH(req: Request, context: Params) {
           "INSERT INTO setlist_sets (id, setlist_id, set_index, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
           [setId, id, i],
         );
-        const songIds = parsed.data.sets[i];
-        for (let p = 0; p < songIds.length; p++) {
+        const songItems = parsed.data.sets[i];
+        for (let p = 0; p < songItems.length; p++) {
+          const item = songItems[p];
+          const songId = typeof item === "string" ? item : item.songId;
+          const lockedWithNext = typeof item === "string" ? false : Boolean(item.lockedWithNext) && p < songItems.length - 1;
           await client.query(
-            "INSERT INTO setlist_set_songs (id, set_id, song_id, position, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
-            [newId(), setId, songIds[p], p],
+            "INSERT INTO setlist_set_songs (id, set_id, song_id, position, locked_with_next, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())",
+            [newId(), setId, songId, p, lockedWithNext],
           );
         }
       }

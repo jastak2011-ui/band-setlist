@@ -52,8 +52,8 @@ export async function POST(req: Request, context: Params) {
       const links = await client.query("SELECT * FROM setlist_set_songs WHERE set_id = $1 ORDER BY position", [sourceSet.id]);
       for (const link of links.rows) {
         await client.query(
-          "INSERT INTO setlist_set_songs (id, set_id, song_id, position, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
-          [newId(), newSetId, link.song_id, link.position],
+          "INSERT INTO setlist_set_songs (id, set_id, song_id, position, locked_with_next, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())",
+          [newId(), newSetId, link.song_id, link.position, Boolean(link.locked_with_next)],
         );
       }
     }
