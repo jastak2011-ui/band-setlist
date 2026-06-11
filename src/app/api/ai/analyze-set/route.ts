@@ -131,6 +131,29 @@ function rawDebugSnippet(payload: unknown) {
   }
 }
 
+function parseResponseJson(text: string) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function providerErrorMessage(payload: unknown, fallbackBody: string) {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const error = (payload as { error?: unknown }).error;
+    if (error && typeof error === "object") {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) return message;
+      const type = (error as { type?: unknown }).type;
+      if (typeof type === "string" && type.trim()) return type;
+    }
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return fallbackBody.trim().slice(0, 1000);
+}
+
 function resolveAiProvider(value?: string): AiProvider | null {
   const resolved = (value || process.env.AI_PROVIDER || "openai").trim().toLowerCase();
   if (resolved === "openai" || resolved === "anthropic") return resolved;
@@ -472,8 +495,17 @@ export async function POST(req: Request) {
         }),
       });
 
-    const payload = await response.json().catch(() => null);
     const providerLabel = provider === "anthropic" ? "Anthropic" : "OpenAI";
+    const responseBody = await response.text().catch(() => "");
+    const payload = parseResponseJson(responseBody);
+    if (provider === "anthropic" && !response.ok) {
+      console.error("Anthropic analyze-set non-2xx response", {
+        status: response.status,
+        statusText: response.statusText,
+        model,
+        body: responseBody,
+      });
+    }
     console.info(`${providerLabel} analyze-set raw response`, payload);
     console.info(`${providerLabel} analyze-set response.output`, payload && typeof payload === "object" ? (payload as { output?: unknown }).output : undefined);
     console.info(`${providerLabel} analyze-set response.output_text`, payload && typeof payload === "object" ? (payload as { output_text?: unknown }).output_text : undefined);
@@ -490,11 +522,17 @@ export async function POST(req: Request) {
       if (provider === "anthropic") console.info("Anthropic analyze-set content blocks", (payload as { content?: unknown }).content);
     }
     if (!response.ok) {
-      const error =
-        payload && typeof payload === "object" && "error" in payload
-          ? (payload as { error?: { message?: string } }).error?.message
-          : null;
-      return privateJson({ ok: false, error: `${providerLabel} analysis failed: ${error || `HTTP ${response.status}`}`, debugRawResponse: rawDebugSnippet(payload) });
+      const message = providerErrorMessage(payload, responseBody);
+      return privateJson({
+        ok: false,
+        provider,
+        model,
+        status: response.status,
+        statusText: response.statusText,
+        providerErrorMessage: message,
+        error: `${providerLabel} analysis failed: ${message || `HTTP ${response.status}`}`,
+        debugRawResponse: rawDebugSnippet(payload ?? responseBody),
+      });
     }
 
     if (provider === "openai" && payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {

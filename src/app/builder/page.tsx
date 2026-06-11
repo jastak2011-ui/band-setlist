@@ -67,6 +67,16 @@ type AiSetAnalysis = {
   recommendedOrderWarning?: string | null;
   recommendedOrderProblems?: string[];
 };
+type AiAnalysisResponse = {
+  ok?: boolean;
+  provider?: AiProvider;
+  model?: string;
+  status?: number;
+  statusText?: string;
+  providerErrorMessage?: string;
+  analysis?: AiSetAnalysis;
+  error?: unknown;
+};
 type AiRecommendedOrderItem = { songId: string; setNumber: number; position: number };
 type AiOrderMove = { songId: string; title: string; from: string; to: string; distance: number };
 type AiOrderComparison = { movedCount: number; unchangedCount: number; biggestMoves: AiOrderMove[] };
@@ -607,6 +617,17 @@ function AiSetAnalysisPanel({ analysis, currentSongs, currentSets, onApplyOrder 
   );
 }
 
+function formatAiAnalysisError(data: AiAnalysisResponse | null, fallback: string) {
+  const provider = data?.provider === "anthropic" ? "Anthropic" : data?.provider === "openai" ? "OpenAI" : null;
+  const parts: string[] = [];
+  if (provider) parts.push(`Provider: ${provider}`);
+  if (data?.model) parts.push(`Model: ${data.model}`);
+  if (data?.status) parts.push(`Status: ${data.status}${data.statusText ? ` ${data.statusText}` : ""}`);
+  if (data?.providerErrorMessage) parts.push(`${provider ?? "AI"} error: ${data.providerErrorMessage}`);
+  if (parts.length > 0) return parts.join(" · ");
+  return typeof data?.error === "string" ? data.error : JSON.stringify(data?.error ?? fallback);
+}
+
 function AiAnalysisList({ title, items, emptyText }: { title: string; items: string[]; emptyText: string }) {
   return (
     <div>
@@ -989,10 +1010,9 @@ export default function BuilderPage() {
         }),
       });
       const text = await response.text();
-      const data = text ? JSON.parse(text) as { ok?: boolean; provider?: AiProvider; model?: string; analysis?: AiSetAnalysis; error?: unknown } : null;
+      const data = text ? JSON.parse(text) as AiAnalysisResponse : null;
       if (!response.ok || !data?.ok || !data.analysis) {
-        const error = typeof data?.error === "string" ? data.error : JSON.stringify(data?.error ?? `AI analysis failed (${response.status}).`);
-        setMsg(error);
+        setMsg(formatAiAnalysisError(data, `AI analysis failed (${response.status}).`));
         return;
       }
       setAiAnalysis({ ...data.analysis, provider: data.provider, model: data.model });

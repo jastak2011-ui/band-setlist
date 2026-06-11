@@ -82,6 +82,17 @@ type AiSetAnalysis = {
   recommendedOrderWarning?: string | null;
   recommendedOrderProblems?: string[];
 };
+type AiAnalysisResponse = {
+  ok?: boolean;
+  provider?: AiProvider;
+  model?: string;
+  status?: number;
+  statusText?: string;
+  providerErrorMessage?: string;
+  analysis?: AiSetAnalysis;
+  error?: unknown;
+  incompleteReason?: string | null;
+};
 type AiOrderMove = { songId: string; title: string; from: string; to: string; distance: number };
 type AiOrderComparison = { movedCount: number; unchangedCount: number; biggestMoves: AiOrderMove[] };
 const crowdRatingOptions = [
@@ -395,6 +406,18 @@ function AiSetAnalysisPanel({ analysis, currentSongs, currentSets, onApplyOrder 
       </div>
     </div>
   );
+}
+
+function formatAiAnalysisError(data: AiAnalysisResponse | null, fallback: string) {
+  const provider = data?.provider === "anthropic" ? "Anthropic" : data?.provider === "openai" ? "OpenAI" : null;
+  const parts: string[] = [];
+  if (provider) parts.push(`Provider: ${provider}`);
+  if (data?.model) parts.push(`Model: ${data.model}`);
+  if (data?.status) parts.push(`Status: ${data.status}${data.statusText ? ` ${data.statusText}` : ""}`);
+  if (data?.providerErrorMessage) parts.push(`${provider ?? "AI"} error: ${data.providerErrorMessage}`);
+  if (data?.incompleteReason) parts.push(`Reason: ${data.incompleteReason}`);
+  if (parts.length > 0) return parts.join(" · ");
+  return typeof data?.error === "string" ? data.error : JSON.stringify(data?.error ?? fallback);
 }
 
 function AiAnalysisList({ title, items, emptyText }: { title: string; items: string[]; emptyText: string }) {
@@ -882,10 +905,9 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         }),
       });
       const text = await response.text();
-      const json = text ? JSON.parse(text) as { ok?: boolean; provider?: AiProvider; model?: string; analysis?: AiSetAnalysis; error?: unknown; incompleteReason?: string | null } : null;
+      const json = text ? JSON.parse(text) as AiAnalysisResponse : null;
       if (!response.ok || !json?.ok || !json.analysis) {
-        const error = typeof json?.error === "string" ? json.error : JSON.stringify(json?.error ?? `AI analysis failed (${response.status}).`);
-        setMsg(json?.incompleteReason ? `${error} Reason: ${json.incompleteReason}.` : error);
+        setMsg(formatAiAnalysisError(json, `AI analysis failed (${response.status}).`));
         return;
       }
       setAiAnalysis({ ...json.analysis, provider: json.provider, model: json.model });
