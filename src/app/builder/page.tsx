@@ -26,6 +26,7 @@ type Song = {
 };
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 type SetBuildEventType = "bar-crowd" | "brewery" | "restaurant" | "outdoor" | "private-party" | "wedding" | "corporate-event";
+type AiProvider = "openai" | "anthropic";
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string; venueType: string | null; crowdSetup: string | null };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
@@ -45,6 +46,8 @@ type SetAnalysis = {
   eventType: { value: SetBuildEventType; label: string; priorities: string[] };
 };
 type AiSetAnalysis = {
+  provider?: AiProvider;
+  model?: string;
   overallRating: number;
   summary: string;
   strengths: string[];
@@ -504,6 +507,11 @@ function AiSetAnalysisPanel({ analysis, currentSongs, currentSets, onApplyOrder 
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-medium text-[var(--accent)]">AI Set Analysis</h2>
+          {(analysis.provider || analysis.model) && (
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Provider: {analysis.provider === "anthropic" ? "Anthropic" : "OpenAI"}{analysis.model ? ` · Model: ${analysis.model}` : ""}
+            </p>
+          )}
           <p className="mt-1 text-[var(--muted)]">{analysis.summary}</p>
         </div>
         <div className="rounded-md border border-[var(--border)] px-3 py-2 text-center">
@@ -951,13 +959,13 @@ export default function BuilderPage() {
     return chunkSongsInOrder(selectedSongs, numSets).map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) }));
   }
 
-  async function analyzeSetWithAi() {
+  async function analyzeSetWithAi(provider: AiProvider) {
     if (selected.size === 0 && !sets) {
       setMsg("Select songs before asking AI to analyze the set.");
       return;
     }
     setAiBusy(true);
-    setMsg("Analyzing set...");
+    setMsg(`Analyzing set with ${provider === "anthropic" ? "Anthropic" : "OpenAI"}...`);
     try {
       const response = await fetch("/api/ai/analyze-set", {
         method: "POST",
@@ -965,6 +973,7 @@ export default function BuilderPage() {
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider,
           bandId: bandId || undefined,
           venueId: venueId || undefined,
           bandName: selectedBand?.name,
@@ -980,14 +989,14 @@ export default function BuilderPage() {
         }),
       });
       const text = await response.text();
-      const data = text ? JSON.parse(text) as { ok?: boolean; analysis?: AiSetAnalysis; error?: unknown } : null;
+      const data = text ? JSON.parse(text) as { ok?: boolean; provider?: AiProvider; model?: string; analysis?: AiSetAnalysis; error?: unknown } : null;
       if (!response.ok || !data?.ok || !data.analysis) {
         const error = typeof data?.error === "string" ? data.error : JSON.stringify(data?.error ?? `AI analysis failed (${response.status}).`);
         setMsg(error);
         return;
       }
-      setAiAnalysis(data.analysis);
-      setMsg("AI Set Analysis is ready.");
+      setAiAnalysis({ ...data.analysis, provider: data.provider, model: data.model });
+      setMsg(`${data.provider === "anthropic" ? "Anthropic" : "OpenAI"} AI Set Analysis is ready.`);
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "AI analysis failed.");
     } finally {
@@ -1236,9 +1245,14 @@ export default function BuilderPage() {
               )}
             </div>
             <button type="button" disabled={busy || selected.size === 0} className="btn btn-primary w-full" onClick={() => void build()}>{busy ? "Working..." : sets ? "Rebuild sets" : "Build sets"}</button>
-            <button type="button" disabled={busy || aiBusy || selected.size === 0} className="btn btn-ghost w-full" onClick={() => void analyzeSetWithAi()}>
-              {aiBusy ? "Analyzing set..." : "AI Analyze Set"}
-            </button>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button type="button" disabled={busy || aiBusy || selected.size === 0} className="btn btn-ghost w-full" onClick={() => void analyzeSetWithAi("openai")}>
+                {aiBusy ? "Analyzing..." : "AI Analyze Set (OpenAI)"}
+              </button>
+              <button type="button" disabled={busy || aiBusy || selected.size === 0} className="btn btn-ghost w-full" onClick={() => void analyzeSetWithAi("anthropic")}>
+                {aiBusy ? "Analyzing..." : "AI Analyze Set (Anthropic)"}
+              </button>
+            </div>
           </div>
 
           {sets && (

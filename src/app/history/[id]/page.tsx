@@ -59,7 +59,10 @@ type Detail = {
   sets: { index: number; songs: Song[] }[];
 };
 type AiRecommendedOrderItem = { songId: string; setNumber: number; position: number };
+type AiProvider = "openai" | "anthropic";
 type AiSetAnalysis = {
+  provider?: AiProvider;
+  model?: string;
   overallRating: number;
   summary: string;
   strengths: string[];
@@ -294,6 +297,11 @@ function AiSetAnalysisPanel({ analysis, currentSongs, currentSets, onApplyOrder 
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-medium text-[var(--accent)]">AI Set Analysis</h2>
+          {(analysis.provider || analysis.model) && (
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Provider: {analysis.provider === "anthropic" ? "Anthropic" : "OpenAI"}{analysis.model ? ` · Model: ${analysis.model}` : ""}
+            </p>
+          )}
           <p className="mt-1 text-[var(--muted)]">{analysis.summary}</p>
         </div>
         <div className="rounded-md border border-[var(--border)] px-3 py-2 text-center">
@@ -844,13 +852,13 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
     setMsg("Saved setlist changes.");
   }
 
-  async function analyzeSetWithAi() {
+  async function analyzeSetWithAi(provider: AiProvider) {
     if (!data?.setlist || songCount === 0) {
       setMsg("Load a setlist before asking AI to analyze it.");
       return;
     }
     setAiBusy(true);
-    setMsg("Analyzing set...");
+    setMsg(`Analyzing set with ${provider === "anthropic" ? "Anthropic" : "OpenAI"}...`);
     try {
       const response = await fetch("/api/ai/analyze-set", {
         method: "POST",
@@ -858,6 +866,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          provider,
           setlistId: id,
           bandId: data.setlist.bandId || undefined,
           venueId: data.setlist.venueId || undefined,
@@ -873,14 +882,14 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         }),
       });
       const text = await response.text();
-      const json = text ? JSON.parse(text) as { ok?: boolean; analysis?: AiSetAnalysis; error?: unknown; incompleteReason?: string | null } : null;
+      const json = text ? JSON.parse(text) as { ok?: boolean; provider?: AiProvider; model?: string; analysis?: AiSetAnalysis; error?: unknown; incompleteReason?: string | null } : null;
       if (!response.ok || !json?.ok || !json.analysis) {
         const error = typeof json?.error === "string" ? json.error : JSON.stringify(json?.error ?? `AI analysis failed (${response.status}).`);
         setMsg(json?.incompleteReason ? `${error} Reason: ${json.incompleteReason}.` : error);
         return;
       }
-      setAiAnalysis(json.analysis);
-      setMsg("AI Set Analysis is ready.");
+      setAiAnalysis({ ...json.analysis, provider: json.provider, model: json.model });
+      setMsg(`${json.provider === "anthropic" ? "Anthropic" : "OpenAI"} AI Set Analysis is ready.`);
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "AI analysis failed.");
     } finally {
@@ -1184,8 +1193,11 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={bpmExportBusy || songCount === 0} onClick={() => void exportBpmPrompter()}>
             {bpmExportBusy ? "Exporting" : "BPM Prompter Export"}
           </button>
-          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={aiBusy || busy || songCount === 0} onClick={() => void analyzeSetWithAi()}>
-            {aiBusy ? "Analyzing set..." : "AI Analyze Set"}
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={aiBusy || busy || songCount === 0} onClick={() => void analyzeSetWithAi("openai")}>
+            {aiBusy ? "Analyzing" : "AI Analyze Set (OpenAI)"}
+          </button>
+          <button type="button" className="btn btn-ghost px-3 py-1 text-xs" disabled={aiBusy || busy || songCount === 0} onClick={() => void analyzeSetWithAi("anthropic")}>
+            {aiBusy ? "Analyzing" : "AI Analyze Set (Anthropic)"}
           </button>
           <button type="button" className="btn btn-ghost px-3 py-1 text-xs" onClick={() => setShowAddSong((value) => !value)}>
             {showAddSong ? "Hide Add Song" : "Add Song"}

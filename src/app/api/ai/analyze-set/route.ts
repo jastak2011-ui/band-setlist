@@ -37,6 +37,7 @@ const compactSongSchema = z.object({
 });
 
 const bodySchema = z.object({
+  provider: z.enum(["openai", "anthropic"]).optional(),
   setlistId: z.string().optional(),
   bandId: z.string().optional(),
   venueId: z.string().optional(),
@@ -130,9 +131,9 @@ function rawDebugSnippet(payload: unknown) {
   }
 }
 
-function resolveAiProvider(): AiProvider | null {
-  const value = (process.env.AI_PROVIDER || "openai").trim().toLowerCase();
-  if (value === "openai" || value === "anthropic") return value;
+function resolveAiProvider(value?: string): AiProvider | null {
+  const resolved = (value || process.env.AI_PROVIDER || "openai").trim().toLowerCase();
+  if (resolved === "openai" || resolved === "anthropic") return resolved;
   return null;
 }
 
@@ -324,21 +325,21 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-    const provider = resolveAiProvider();
-    if (!provider) {
-      return privateJson({ ok: false, error: `Unsupported AI_PROVIDER: ${process.env.AI_PROVIDER}` }, { status: 400 });
-    }
-    const apiKey = provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return privateJson({ ok: false, error: provider === "anthropic" ? "ANTHROPIC_API_KEY is not configured" : "OPENAI_API_KEY is not configured" });
-    }
-
     const json = await req.json();
     const parsed = bodySchema.safeParse(json);
     if (!parsed.success) {
       return privateJson({ ok: false, error: parsed.error.flatten() }, { status: 400 });
     }
     const input = parsed.data;
+    const provider = resolveAiProvider(input.provider);
+    if (!provider) {
+      return privateJson({ ok: false, error: `Unsupported AI provider: ${input.provider ?? process.env.AI_PROVIDER}` }, { status: 400 });
+    }
+    const model = provider === "anthropic" ? ANTHROPIC_MODEL : OPENAI_MODEL;
+    const apiKey = provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return privateJson({ ok: false, error: provider === "anthropic" ? "Anthropic API key missing" : "OpenAI API key missing" });
+    }
     if (input.bandId) await requireBandAccess(user, input.bandId);
     if (input.venueId && !input.bandId && user.role !== "admin") {
       return privateJson({ ok: false, error: "bandId required" }, { status: 400 });
@@ -437,7 +438,7 @@ export async function POST(req: Request) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
+          model,
           max_tokens: 6000,
           system: SYSTEM_PROMPT,
           messages: [
@@ -455,7 +456,7 @@ export async function POST(req: Request) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: OPENAI_MODEL,
+          model,
           reasoning: { effort: "low" },
           input: [
             {
@@ -493,7 +494,7 @@ export async function POST(req: Request) {
         payload && typeof payload === "object" && "error" in payload
           ? (payload as { error?: { message?: string } }).error?.message
           : null;
-      return privateJson({ ok: false, error: error || `${providerLabel} analysis failed (${response.status})`, debugRawResponse: rawDebugSnippet(payload) });
+      return privateJson({ ok: false, error: `${providerLabel} analysis failed: ${error || `HTTP ${response.status}`}`, debugRawResponse: rawDebugSnippet(payload) });
     }
 
     if (provider === "openai" && payload && typeof payload === "object" && (payload as { status?: unknown }).status === "incomplete") {
@@ -529,7 +530,7 @@ export async function POST(req: Request) {
       return privateJson({ ok: false, error: `${providerLabel} returned analysis in an unexpected format.`, details: validated.error.flatten(), debugRawResponse: rawDebugSnippet(payload) });
     }
 
-    return privateJson({ ok: true, analysis: repairRecommendedOrder(validated.data, orderedIds, input.numSets, input) });
+    return privateJson({ ok: true, provider, model, analysis: repairRecommendedOrder(validated.data, orderedIds, input.numSets, input) });
   } catch (error) {
     try {
       return authErrorResponse(error);
