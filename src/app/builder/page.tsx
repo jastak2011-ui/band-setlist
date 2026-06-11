@@ -57,12 +57,16 @@ type AiSetAnalysis = {
   vocalFatigueNotes: string[];
   venueFitNotes: string[];
   songsToWatch: string[];
+  orderStrategySummary?: string;
+  orderChangeSummary?: { changed: boolean; songsMoved: number; reason: string };
   recommendedOrder: AiRecommendedOrderItem[];
   orderReasons?: Record<string, string>;
   recommendedOrderWarning?: string | null;
   recommendedOrderProblems?: string[];
 };
 type AiRecommendedOrderItem = { songId: string; setNumber: number; position: number };
+type AiOrderMove = { songId: string; title: string; from: string; to: string; distance: number };
+type AiOrderComparison = { movedCount: number; unchangedCount: number; biggestMoves: AiOrderMove[] };
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
@@ -275,6 +279,45 @@ function formatScore(value: number | null | undefined) {
   return value == null ? "-" : `${value}/10`;
 }
 
+function compareAiOrder(currentSets: Built[], recommendedOrder: AiRecommendedOrderItem[]): AiOrderComparison {
+  const currentById = new Map<string, { title: string; setNumber: number; position: number; flatIndex: number }>();
+  let currentIndex = 0;
+  [...currentSets].sort((a, b) => a.index - b.index).forEach((set) => {
+    [...set.songs].sort((a, b) => a.position - b.position).forEach((song, songIndex) => {
+      currentById.set(song.id, {
+        title: song.title,
+        setNumber: set.index,
+        position: songIndex + 1,
+        flatIndex: currentIndex,
+      });
+      currentIndex += 1;
+    });
+  });
+
+  let movedCount = 0;
+  let unchangedCount = 0;
+  const moves: AiOrderMove[] = [];
+  [...recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position).forEach((item, index) => {
+    const current = currentById.get(item.songId);
+    if (!current) return;
+    const moved = current.setNumber !== item.setNumber || current.position !== item.position;
+    if (moved) {
+      movedCount += 1;
+      moves.push({
+        songId: item.songId,
+        title: current.title,
+        from: `Set ${current.setNumber} #${current.position}`,
+        to: `Set ${item.setNumber} #${item.position}`,
+        distance: Math.abs(index - current.flatIndex),
+      });
+    } else {
+      unchangedCount += 1;
+    }
+  });
+
+  return { movedCount, unchangedCount, biggestMoves: moves.sort((a, b) => b.distance - a.distance).slice(0, 5) };
+}
+
 function shuffleSongs(songs: BuiltSong[]) {
   const shuffled = [...songs];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -441,9 +484,11 @@ function AnalysisScoreList({ title, rows, emptyText }: { title: string; rows: Se
   );
 }
 
-function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis: AiSetAnalysis; currentSongs: BuiltSong[]; onApplyOrder: () => void }) {
+function AiSetAnalysisPanel({ analysis, currentSongs, currentSets, onApplyOrder }: { analysis: AiSetAnalysis; currentSongs: BuiltSong[]; currentSets: Built[]; onApplyOrder: () => void }) {
   const byId = new Map(currentSongs.map((song) => [song.id, song]));
   const recommendedBySet = [...analysis.recommendedOrder].sort((a, b) => a.setNumber - b.setNumber || a.position - b.position);
+  const orderComparison = compareAiOrder(currentSets, analysis.recommendedOrder);
+  const keptSameOrder = analysis.recommendedOrder.length > 0 && orderComparison.movedCount === 0;
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[#0f131a]/50 px-3 py-3 text-sm">
@@ -496,6 +541,27 @@ function AiSetAnalysisPanel({ analysis, currentSongs, onApplyOrder }: { analysis
         )}
         {analysis.recommendedOrder.length > 0 ? (
           <div className="space-y-4">
+            <div className="rounded-md border border-[var(--border)] bg-black/10 px-3 py-2">
+              <h4 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">AI Order Changes</h4>
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                {keptSameOrder
+                  ? `AI kept the existing order. Reason: ${analysis.orderChangeSummary?.reason || analysis.orderStrategySummary || "AI did not identify a stronger sequence."}`
+                  : `AI moved ${orderComparison.movedCount} of ${currentSongs.length} songs. ${orderComparison.unchangedCount} song${orderComparison.unchangedCount === 1 ? "" : "s"} stayed in the same slot.`}
+              </p>
+              {analysis.orderStrategySummary && !keptSameOrder && (
+                <p className="mt-1 text-xs text-[var(--muted)]">{analysis.orderStrategySummary}</p>
+              )}
+              {!keptSameOrder && orderComparison.biggestMoves.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-medium text-[var(--text)]">Biggest moves</div>
+                  <ul className="mt-1 space-y-1 text-xs text-[var(--muted)]">
+                    {orderComparison.biggestMoves.map((move) => (
+                      <li key={move.songId}>{move.title} moved from {move.from} to {move.to}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
             {Array.from(new Set(recommendedBySet.map((item) => item.setNumber))).map((setNumber) => (
               <div key={setNumber}>
                 <h4 className="mb-2 text-sm font-medium text-[var(--accent)]">Set {setNumber}</h4>
@@ -584,6 +650,10 @@ export default function BuilderPage() {
     if (sets) return flattenSetsInOrder(sets);
     return songs.filter((song) => selected.has(song.id)).map((song, index) => ({ ...song, position: index + 1 }));
   }, [selected, sets, songs]);
+  const currentAnalysisSets = useMemo(() => {
+    if (sets) return sets;
+    return chunkSongsInOrder(currentAnalysisSongs, numSets);
+  }, [currentAnalysisSongs, numSets, sets]);
 
   const load = useCallback(async () => {
     try {
@@ -1163,7 +1233,7 @@ export default function BuilderPage() {
               <button type="button" disabled={busy || !sets} className="btn btn-primary w-full" onClick={() => void save()}>{busy ? "Saving..." : "Save to history"}</button>
             </div>
           )}
-          {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentAnalysisSongs} onApplyOrder={applyAiRecommendedOrder} />}
+          {aiAnalysis && <AiSetAnalysisPanel analysis={aiAnalysis} currentSongs={currentAnalysisSongs} currentSets={currentAnalysisSets} onApplyOrder={applyAiRecommendedOrder} />}
         </div>
       </div>
 
@@ -1470,10 +1540,5 @@ function ScoringDetails({ label, details }: { label: string; details: Array<{ la
     </details>
   );
 }
-
-
-
-
-
 
 

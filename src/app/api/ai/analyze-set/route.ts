@@ -61,6 +61,12 @@ const aiAnalysisSchema = z.object({
   vocalFatigueNotes: z.array(z.string()).default([]),
   venueFitNotes: z.array(z.string()).default([]),
   songsToWatch: z.array(z.string()).default([]),
+  orderStrategySummary: z.string().default("AI evaluated the current order and recommended a sequence."),
+  orderChangeSummary: z.object({
+    changed: z.boolean().default(false),
+    songsMoved: z.coerce.number().int().min(0).default(0),
+    reason: z.string().default("No order change explanation returned."),
+  }).default({ changed: false, songsMoved: 0, reason: "No order change explanation returned." }),
   recommendedOrder: z.array(z.object({
     songId: z.string(),
     setNumber: z.number().int().min(1),
@@ -315,6 +321,8 @@ export async function POST(req: Request) {
         "Use every provided song exactly once in recommendedOrder.",
         "Each recommendedOrder item must include only songId, setNumber, and position.",
         "Put optional notable placement reasons in orderReasons by songId.",
+        "Do not simply return the current order unless it is genuinely the best order.",
+        "If keeping the same order, explain why in orderChangeSummary.reason.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
@@ -337,7 +345,14 @@ export async function POST(req: Request) {
           },
           {
             role: "user",
-            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], recommendedOrder array, orderReasons object.
+            content: `Analyze this setlist context and return one valid JSON object only. No markdown. No comments. No prose outside JSON. Required fields: overallRating number 1-10, summary string, strengths string[], concerns string[], recommendedMoves string[], suggestedOpener string|null, suggestedCloser string|null, suggestedSetBreak string|null, energyFlowNotes string[], vocalFatigueNotes string[], venueFitNotes string[], songsToWatch string[], orderStrategySummary string, orderChangeSummary object, recommendedOrder array, orderReasons object.
+
+order strategy rules:
+- Evaluate whether a stronger sequence exists.
+- Do not simply return the current order unless it is genuinely the best order.
+- Prefer making meaningful improvements when pacing, opener/closer, vocal fatigue, BPM flow, or venue fit can improve.
+- If keeping the same order, explain why in orderChangeSummary.reason.
+- orderChangeSummary shape: {"changed":true,"songsMoved":0,"reason":"..."}
 
 recommendedOrder rules:
 - Each item must be compact: {"songId":"...","setNumber":1,"position":1}
