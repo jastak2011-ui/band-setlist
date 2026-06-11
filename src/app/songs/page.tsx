@@ -832,8 +832,8 @@ export default function SongsPage() {
       } else {
         setImportDetails(Array.isArray(data?.details) ? data.details : []);
         const errorNote = data?.errors?.length ? ` ${data.errors.length} row issue(s) logged.` : "";
-        if (data?.format === "OnSong") {
-          setMsg(`OnSong archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
+        if (typeof data?.format === "string" && data.format.startsWith("OnSong")) {
+          setMsg(`${data.format} archive import complete: ${data.songsFound ?? data.imported ?? 0} songs found, ${data.created ?? 0} created, ${data.matched ?? 0} matched/reused, ${data.updated ?? 0} updated with OnSong identity, ${data.skipped ?? 0} skipped.${errorNote}`);
         } else {
           setMsg(`${data?.format ?? "File"} import complete: ${data?.created ?? 0} created, ${data?.matched ?? 0} reused, ${data?.updated ?? 0} updated, ${data?.duplicatesSkipped ?? 0} duplicates skipped, ${data?.skipped ?? 0} skipped.${errorNote}`);
         }

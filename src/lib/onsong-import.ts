@@ -2,6 +2,11 @@ import { BplistObject, BplistReal, BplistUid, parseBinaryPlist } from "@/lib/bpl
 import type { SongImportInput } from "@/lib/song-import";
 
 type ArchiveDictionary = { [key: string]: BplistObject };
+export type OnSongArchiveType = "SongSet" | "Single Song" | "Unknown archive with songs";
+export type ParsedOnSongArchive = {
+  archiveType: OnSongArchiveType;
+  songs: SongImportInput[];
+};
 
 function isUid(value: BplistObject | undefined): value is BplistUid {
   const candidate = value as unknown as Partial<BplistUid>;
@@ -68,11 +73,15 @@ function songFromArchivedObject(objects: BplistObject[], song: BplistObject | un
   const content = stringValue(objects, song.content);
   const lyrics = stringValue(objects, song.lyrics);
   const hash = numberValue(objects, song.hash);
+  const tempo = numberValue(objects, song.tempo);
+  const duration = numberValue(objects, song.duration);
 
   return {
     title: titleFromSong(objects, song).trim(),
     artist: artistFromSong(objects, song).trim() || "Unknown Artist",
+    bpm: tempo == null ? null : Math.trunc(tempo),
     musicalKey: stringValue(objects, song.key) || null,
+    durationSec: duration == null ? null : Math.trunc(duration),
     notes: plainContent(content),
     onsongSongId: stringValue(objects, song.ID),
     onsongFilepath: stringValue(objects, song.filepath),
@@ -85,15 +94,7 @@ function songFromArchivedObject(objects: BplistObject[], song: BplistObject | un
   };
 }
 
-export function parseOnSongArchiveSongs(buffer: Buffer): SongImportInput[] {
-  if (buffer.subarray(0, 8).toString("ascii") !== "bplist00") throw new Error("Not an OnSong archive.");
-  const archive = parseBinaryPlist(buffer);
-  if (!isDictionary(archive) || archive.$archiver !== "NSKeyedArchiver") throw new Error("Not an OnSong NSKeyedArchiver archive.");
-
-  const objects = Array.isArray(archive.$objects) ? archive.$objects : [];
-  const root = deref(objects, isDictionary(archive.$top) ? archive.$top.root : undefined);
-  if (!isDictionary(root) || className(objects, root) !== "SongSet") throw new Error("OnSong archive root is not a SongSet.");
-
+function songsFromSongSet(objects: BplistObject[], root: ArchiveDictionary) {
   const collection = deref(objects, root.songs);
   const itemArray = deref(objects, isDictionary(collection) ? collection.collection : undefined);
   const itemRefs = isDictionary(itemArray) && Array.isArray(itemArray["NS.objects"]) ? itemArray["NS.objects"] : [];
@@ -103,4 +104,43 @@ export function parseOnSongArchiveSongs(buffer: Buffer): SongImportInput[] {
     .map((item) => deref(objects, isDictionary(item) ? item.song : undefined))
     .map((song) => songFromArchivedObject(objects, song))
     .filter((song): song is SongImportInput => Boolean(song?.title));
+}
+
+function scanSongObjects(objects: BplistObject[]) {
+  const seen = new Set<string>();
+  const songs: SongImportInput[] = [];
+  for (const object of objects) {
+    const song = songFromArchivedObject(objects, object);
+    if (!song?.title) continue;
+    const key = `${song.onsongSongId ?? ""}::${song.title.toLowerCase()}::${song.artist.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    songs.push(song);
+  }
+  return songs;
+}
+
+export function parseOnSongArchive(buffer: Buffer): ParsedOnSongArchive {
+  if (buffer.subarray(0, 8).toString("ascii") !== "bplist00") throw new Error("Not an OnSong archive.");
+  const archive = parseBinaryPlist(buffer);
+  if (!isDictionary(archive) || archive.$archiver !== "NSKeyedArchiver") throw new Error("Not an OnSong NSKeyedArchiver archive.");
+
+  const objects = Array.isArray(archive.$objects) ? archive.$objects : [];
+  const root = deref(objects, isDictionary(archive.$top) ? archive.$top.root : undefined);
+  const rootClass = className(objects, root);
+  if (isDictionary(root) && rootClass === "SongSet") {
+    return { archiveType: "SongSet", songs: songsFromSongSet(objects, root) };
+  }
+  if (isDictionary(root) && rootClass === "Song") {
+    const song = songFromArchivedObject(objects, root);
+    return { archiveType: "Single Song", songs: song?.title ? [song] : [] };
+  }
+
+  const songs = scanSongObjects(objects);
+  if (songs.length === 0) throw new Error("Unsupported OnSong archive: no Song objects found.");
+  return { archiveType: "Unknown archive with songs", songs };
+}
+
+export function parseOnSongArchiveSongs(buffer: Buffer): SongImportInput[] {
+  return parseOnSongArchive(buffer).songs;
 }

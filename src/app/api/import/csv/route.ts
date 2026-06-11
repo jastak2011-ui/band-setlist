@@ -4,7 +4,7 @@ import Papa from "papaparse";
 import { authErrorResponse, requireUser } from "@/lib/auth";
 import { findOrCreateSong, findOrCreateSongs, type SongImportInput } from "@/lib/song-import";
 import { audienceAgeAppealArraySchema } from "@/lib/audience-age";
-import { parseOnSongArchiveSongs } from "@/lib/onsong-import";
+import { parseOnSongArchive } from "@/lib/onsong-import";
 
 type RawImportRow = Record<string, unknown>;
 type ImportDetail = {
@@ -303,9 +303,12 @@ export async function POST(req: Request) {
     const isArchiveUpload = filename.toLowerCase().endsWith(".archive") || body.subarray(0, 8).toString("ascii") === "bplist00";
     let parsed: { format: string; rows: RawImportRow[]; errors: string[] };
     try {
-      parsed = isArchiveUpload
-        ? { format: "OnSong", rows: parseOnSongArchiveSongs(body), errors: [] }
-        : parseImportRows(body.toString("utf8"));
+      if (isArchiveUpload) {
+        const archive = parseOnSongArchive(body);
+        parsed = { format: `OnSong ${archive.archiveType}`, rows: archive.songs, errors: [] };
+      } else {
+        parsed = parseImportRows(body.toString("utf8"));
+      }
     } catch (error) {
       return importErrorResponse(isArchiveUpload ? "OnSong archive import failed" : "Song import failed", error, 400);
     }
@@ -316,7 +319,8 @@ export async function POST(req: Request) {
     const pendingOnSongImports: Array<{ row: number; input: SongImportInput; mapped: Record<string, unknown> }> = [];
 
     for (const [index, raw] of parsed.rows.entries()) {
-      const mapped = parsed.format === "OnSong" ? canonicalizeOnSongRow(raw) : canonicalizeRow(raw);
+      const isOnSongImport = parsed.format.startsWith("OnSong");
+      const mapped = isOnSongImport ? canonicalizeOnSongRow(raw) : canonicalizeRow(raw);
       if (!mapped.title || isSetMarker(mapped.title)) {
         counts.skipped += 1;
         details.push({
@@ -326,7 +330,7 @@ export async function POST(req: Request) {
           status: "skipped",
           linked: false,
           reason: !mapped.title ? "Skipped because no song title was found." : "Skipped because this row is a set marker, not a song.",
-          missingIdentityFields: parsed.format === "OnSong" ? missingIdentityFields(mapped) : [],
+          missingIdentityFields: isOnSongImport ? missingIdentityFields(mapped) : [],
         });
         continue;
       }
@@ -343,7 +347,7 @@ export async function POST(req: Request) {
           status: "skipped",
           linked: false,
           reason,
-          missingIdentityFields: parsed.format === "OnSong" ? missingIdentityFields(mapped) : [],
+          missingIdentityFields: isOnSongImport ? missingIdentityFields(mapped) : [],
         });
         continue;
       }
@@ -380,7 +384,7 @@ export async function POST(req: Request) {
         onsongProviderUri: row.data.onsong_provider_uri ?? null,
       };
 
-      if (parsed.format === "OnSong") {
+      if (isOnSongImport) {
         pendingOnSongImports.push({ row: index + 1, input, mapped });
         continue;
       }
@@ -399,7 +403,7 @@ export async function POST(req: Request) {
         counts.matched += 1;
         counts.duplicatesSkipped += 1;
       }
-      const missing = parsed.format === "OnSong" ? missingIdentityFields(mapped) : [];
+      const missing = isOnSongImport ? missingIdentityFields(mapped) : [];
       const linked = Boolean(result.song.onsongSongId);
       details.push({
         row: index + 1,
@@ -407,7 +411,7 @@ export async function POST(req: Request) {
         artist: row.data.artist || "Unknown Artist",
         status: result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched",
         linked,
-        reason: parsed.format === "OnSong" ? detailReason(result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched", linked, missing) : `${result.status} song.`,
+        reason: isOnSongImport ? detailReason(result.status === "created" ? "created" : result.status === "updated" ? "updated" : "matched", linked, missing) : `${result.status} song.`,
         missingIdentityFields: missing,
       });
     }
