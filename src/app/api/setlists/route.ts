@@ -15,7 +15,7 @@ const saveBody = z.object({
 });
 
 function timesAreValid(startTime: string | null | undefined, endTime: string | null | undefined) {
-  return !startTime || !endTime || endTime > startTime;
+  return !startTime || !endTime || startTime !== endTime;
 }
 
 export const dynamic = "force-dynamic";
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
       return privateJson({ error: parsed.error.flatten() }, { status: 400 });
     }
     if (!timesAreValid(parsed.data.startTime, parsed.data.endTime)) {
-      return privateJson({ error: "End Time must be after Start Time." }, { status: 400 });
+      return privateJson({ error: "Start Time and End Time cannot be the same." }, { status: 400 });
     }
     await requireBandAccess(user, parsed.data.bandId);
 

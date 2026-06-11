@@ -49,8 +49,18 @@ function timeInputValue(value: string | null | undefined) {
   return value ? value.slice(0, 5) : "";
 }
 
+function minutesFromTime(value: string) {
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
 function timesAreValid(startTime: string, endTime: string) {
-  return !startTime || !endTime || endTime > startTime;
+  if (!startTime || !endTime) return true;
+  const start = minutesFromTime(startTime);
+  const end = minutesFromTime(endTime);
+  if (start == null || end == null) return false;
+  return start !== end;
 }
 
 function sortHistoryLists(lists: Setlist[]) {
@@ -175,7 +185,7 @@ export default function HistoryPage() {
   async function updateSetlistTimes(list: Setlist) {
     const draft = timeDrafts[list.id] ?? { startTime: timeInputValue(list.startTime), endTime: timeInputValue(list.endTime) };
     if (!timesAreValid(draft.startTime, draft.endTime)) {
-      setMsg("End Time must be after Start Time.");
+      setMsg("Start Time and End Time cannot be the same.");
       return;
     }
 

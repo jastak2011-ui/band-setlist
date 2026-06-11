@@ -15,7 +15,7 @@ const patchBody = z.object({
 });
 
 function timesAreValid(startTime: string | null | undefined, endTime: string | null | undefined) {
-  return !startTime || !endTime || endTime > startTime;
+  return !startTime || !endTime || startTime !== endTime;
 }
 
 export const dynamic = "force-dynamic";
@@ -110,7 +110,7 @@ export async function PATCH(req: Request, context: Params) {
     const nextStart = parsed.data.startTime !== undefined ? parsed.data.startTime : currentStart;
     const nextEnd = parsed.data.endTime !== undefined ? parsed.data.endTime : currentEnd;
     if (!timesAreValid(nextStart, nextEnd)) {
-      return privateJson({ error: "End Time must be after Start Time." }, { status: 400 });
+      return privateJson({ error: "Start Time and End Time cannot be the same." }, { status: 400 });
     }
 
   await transaction(async (client) => {

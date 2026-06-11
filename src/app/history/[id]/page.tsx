@@ -137,9 +137,11 @@ function gigWindow(start: string | null | undefined, end: string | null | undefi
   if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return null;
   let minutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
   if (minutes < 0) minutes += 24 * 60;
+  if (minutes === 0) return null;
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return `${hours}h ${mins.toString().padStart(2, "0")}m`;
+  const overnight = (endHour * 60 + endMinute) < (startHour * 60 + startMinute);
+  return `${hours}h ${mins.toString().padStart(2, "0")}m${overnight ? " overnight" : ""}`;
 }
 
 function compareAiOrder(currentSets: Detail["sets"], recommendedOrder: AiRecommendedOrderItem[]): AiOrderComparison {

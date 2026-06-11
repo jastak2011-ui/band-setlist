@@ -151,10 +151,25 @@ function formatDate(value: string | undefined) {
   return value.slice(0, 10);
 }
 
-function timeOfDayLabel(startTime: string | undefined) {
+function minutesFromTime(value: string | undefined) {
+  if (!value) return null;
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function crossesMidnight(startTime: string | undefined, endTime: string | undefined) {
+  const start = minutesFromTime(startTime);
+  const end = minutesFromTime(endTime);
+  return start != null && end != null && end < start;
+}
+
+function timeOfDayLabel(startTime: string | undefined, endTime?: string | undefined) {
+  if (crossesMidnight(startTime, endTime)) return "Late Night / Overnight";
   if (!startTime) return null;
-  const hour = Number(startTime.slice(0, 2));
-  if (!Number.isFinite(hour)) return null;
+  const startMinutes = minutesFromTime(startTime);
+  if (startMinutes == null) return null;
+  const hour = Math.floor(startMinutes / 60);
   if (hour < 17) return "Afternoon";
   if (hour < 19) return "Early Evening";
   if (hour < 22) return "Prime Time Evening";
@@ -327,7 +342,8 @@ export async function POST(req: Request) {
       performanceDate: formatDate(input.performedAt),
       startTime: input.startTime ?? null,
       endTime: input.endTime ?? null,
-      timeOfDay: timeOfDayLabel(input.startTime),
+      timeOfDay: timeOfDayLabel(input.startTime, input.endTime),
+      overnightGig: crossesMidnight(input.startTime, input.endTime),
       numberOfSets: input.numSets,
       targetDurationSec: input.targetDurationSec ?? null,
       songCountSent: includedCount,
@@ -343,6 +359,7 @@ export async function POST(req: Request) {
         "Do not simply return the current order unless it is genuinely the best order.",
         "If keeping the same order, explain why in orderChangeSummary.reason.",
         "Consider venue type, crowd setup, start time, end time, and time of day.",
+        "If overnightGig is true, treat the set as a late-night gig crossing midnight.",
         "Apply venue guidance: Restaurant should start conversation-friendly and build gradually; Outdoor needs a strong familiar opener and can ramp sooner; Bar Crowd can start with higher energy; Brewery should feel social and familiar while building through the night; Private Party should balance familiarity and variety; Wedding should prioritize broad familiarity, danceability, and singalong moments; Corporate Event should start conservatively with broad appeal.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
@@ -391,7 +408,7 @@ orderReasons rules:
 - Do not provide a reason for every song.
 - Each reason under 140 characters.
 
-Consider venue type, crowd setup, start/end time, time of day, expected audience engagement level, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit, Energy Flow, Recommended Moves, Suggested Opener, or Suggested Closer when relevant. Venue guidance: Restaurant means conversation-friendly early pacing, gradual energy build, familiar songs, and avoid peaking too early. Outdoor means attention is harder to capture, so familiar songs, singalongs, and a strong opener matter, with energy able to ramp sooner. Bar Crowd can handle higher energy earlier. Brewery should feel casual/social and build engagement through the night. Private Party should balance familiarity and variety. Wedding should prioritize broad familiarity, danceability, and singalong moments. Corporate Event should use conservative early pacing and broad appeal. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
+Consider venue type, crowd setup, start/end time, time of day, overnightGig, expected audience engagement level, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit, Energy Flow, Recommended Moves, Suggested Opener, or Suggested Closer when relevant. If overnightGig is true, treat the gig as late-night and crossing midnight, with stronger late-set singalong/dance/anthem material when suitable. Venue guidance: Restaurant means conversation-friendly early pacing, gradual energy build, familiar songs, and avoid peaking too early. Outdoor means attention is harder to capture, so familiar songs, singalongs, and a strong opener matter, with energy able to ramp sooner. Bar Crowd can handle higher energy earlier. Brewery should feel casual/social and build engagement through the night. Private Party should balance familiarity and variety. Wedding should prioritize broad familiarity, danceability, and singalong moments. Corporate Event should use conservative early pacing and broad appeal. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
           },
         ],
         max_output_tokens: 6000,
