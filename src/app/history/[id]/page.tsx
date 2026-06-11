@@ -49,8 +49,12 @@ type Detail = {
     performedAt: string | null;
     venueId?: string | null;
     venueName?: string | null;
+    venueType?: string | null;
+    crowdSetup?: string | null;
     bandId?: string | null;
     bandName?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
   };
   sets: { index: number; songs: Song[] }[];
 };
@@ -117,6 +121,25 @@ function totalDuration(songs: { durationSec?: number | null }[]) {
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not set";
   return new Date(value).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return "Not set";
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
+  return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function gigWindow(start: string | null | undefined, end: string | null | undefined) {
+  if (!start || !end) return null;
+  const [startHour, startMinute] = start.slice(0, 5).split(":").map(Number);
+  const [endHour, endMinute] = end.slice(0, 5).split(":").map(Number);
+  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return null;
+  let minutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
+  if (minutes < 0) minutes += 24 * 60;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins.toString().padStart(2, "0")}m`;
 }
 
 function compareAiOrder(currentSets: Detail["sets"], recommendedOrder: AiRecommendedOrderItem[]): AiOrderComparison {
@@ -838,7 +861,11 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           venueId: data.setlist.venueId || undefined,
           bandName: data.setlist.bandName ?? undefined,
           venueName: data.setlist.venueName ?? undefined,
+          venueType: data.setlist.venueType ?? undefined,
+          crowdSetup: data.setlist.crowdSetup ?? undefined,
           performedAt: data.setlist.performedAt ?? undefined,
+          startTime: data.setlist.startTime ?? undefined,
+          endTime: data.setlist.endTime ?? undefined,
           numSets: sets.length,
           sets: sets.map((set) => ({ index: set.index, songs: set.songs.map((song, index) => compactSongForAi(song, set.index, index + 1)) })),
         }),
@@ -1126,10 +1153,23 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
               ? `Performance date: ${formatDate(data.setlist.performedAt)}`
               : `Created: ${new Date(data.setlist.createdAt).toLocaleString()}`}
           </p>
+          <div className="mt-2 grid gap-1 text-xs text-[var(--muted)] sm:grid-cols-2">
+            <div>Venue Type: <span className="text-[var(--text)]">{data.setlist.venueType ?? "Not set"}</span></div>
+            <div>Crowd Setup: <span className="text-[var(--text)]">{data.setlist.crowdSetup ?? "Mixed"}</span></div>
+            <div>Start Time: <span className="text-[var(--text)]">{formatTime(data.setlist.startTime)}</span></div>
+            <div>End Time: <span className="text-[var(--text)]">{formatTime(data.setlist.endTime)}</span></div>
+            {gigWindow(data.setlist.startTime, data.setlist.endTime) && (
+              <div className="sm:col-span-2">Gig Duration Window: <span className="text-[var(--text)]">{gigWindow(data.setlist.startTime, data.setlist.endTime)}</span></div>
+            )}
+          </div>
           <div className="print-only mt-2 text-sm">
             <div>Band: {data.setlist.bandName ?? "No band assigned"}</div>
             <div>Venue: {data.setlist.venueName ?? "Unknown venue"}</div>
+            <div>Venue type: {data.setlist.venueType ?? "Not set"}</div>
+            <div>Crowd setup: {data.setlist.crowdSetup ?? "Mixed"}</div>
             <div>Performance date: {formatDate(data.setlist.performedAt)}</div>
+            <div>Start Time: {formatTime(data.setlist.startTime)}</div>
+            <div>End Time: {formatTime(data.setlist.endTime)}</div>
             <div>{sets.length} set{sets.length === 1 ? "" : "s"} - {songCount} song{songCount === 1 ? "" : "s"}</div>
           </div>
           <p className="mono mt-1 text-xs text-[var(--muted)]">Total duration: {formatDuration(eventDuration)}</p>

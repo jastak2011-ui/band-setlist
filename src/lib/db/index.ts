@@ -71,6 +71,8 @@ async function bootstrapDatabase(db: Queryable) {
     CREATE TABLE IF NOT EXISTS venues (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      venue_type TEXT,
+      crowd_setup TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -121,6 +123,8 @@ async function bootstrapDatabase(db: Queryable) {
       band_id TEXT REFERENCES bands(id) ON DELETE SET NULL,
       title TEXT,
       performed_at TIMESTAMPTZ,
+      start_time TIME,
+      end_time TIME,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       notes TEXT
@@ -218,6 +222,8 @@ async function bootstrapDatabase(db: Queryable) {
   `);
 
   await addColumnIfMissing(db, "bands", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await addColumnIfMissing(db, "venues", "venue_type", "TEXT");
+  await addColumnIfMissing(db, "venues", "crowd_setup", "TEXT");
   await addColumnIfMissing(db, "venues", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "songs", "genre", "TEXT");
   await addColumnIfMissing(db, "songs", "vibe", "TEXT");
@@ -248,6 +254,8 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "songs", "onsong_provider_uri", "TEXT");
   await addColumnIfMissing(db, "songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlists", "band_id", "TEXT REFERENCES bands(id) ON DELETE SET NULL");
+  await addColumnIfMissing(db, "setlists", "start_time", "TIME");
+  await addColumnIfMissing(db, "setlists", "end_time", "TIME");
   await addColumnIfMissing(db, "setlists", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_sets", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_sets", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -308,6 +316,8 @@ export type DbSetlist = {
   bandId: string | null;
   title: string | null;
   performedAt: Date | null;
+  startTime: string | null;
+  endTime: string | null;
   createdAt: Date;
   updatedAt: Date;
   notes: string | null;
@@ -362,6 +372,8 @@ export function mapSetlist(row: QueryResultRow): DbSetlist {
     bandId: row.band_id,
     title: row.title,
     performedAt: row.performed_at,
+    startTime: row.start_time ?? null,
+    endTime: row.end_time ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     notes: row.notes,
@@ -372,6 +384,8 @@ export function mapNamedRow(row: QueryResultRow) {
   return {
     id: row.id as string,
     name: row.name as string,
+    venueType: (row.venue_type as string | null | undefined) ?? null,
+    crowdSetup: (row.crowd_setup as string | null | undefined) ?? null,
     createdAt: row.created_at as Date,
     updatedAt: row.updated_at as Date,
   };

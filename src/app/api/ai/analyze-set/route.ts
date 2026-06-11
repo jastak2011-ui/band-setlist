@@ -37,8 +37,12 @@ const bodySchema = z.object({
   venueId: z.string().optional(),
   bandName: z.string().optional(),
   venueName: z.string().optional(),
+  venueType: z.string().optional(),
+  crowdSetup: z.string().optional(),
   eventType: eventType.optional(),
   performedAt: z.string().optional(),
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
   numSets: z.number().int().min(1).max(12),
   targetDurationSec: z.number().int().positive().optional(),
   sets: z.array(z.object({
@@ -145,6 +149,15 @@ function extractFirstJsonObject(text: string) {
 function formatDate(value: string | undefined) {
   if (!value) return undefined;
   return value.slice(0, 10);
+}
+
+function timeOfDayLabel(startTime: string | undefined) {
+  if (!startTime) return null;
+  const hour = Number(startTime.slice(0, 2));
+  if (!Number.isFinite(hour)) return null;
+  if (hour < 17) return "afternoon";
+  if (hour < 21) return "early evening";
+  return "late night";
 }
 
 async function lookupName(table: "bands" | "venues", id: string | undefined) {
@@ -306,9 +319,14 @@ export async function POST(req: Request) {
     const context = {
       bandName,
       venueName,
+      venueType: input.venueType ?? null,
+      crowdSetup: input.crowdSetup ?? null,
       setlistId: input.setlistId ?? null,
       buildSetFor: input.eventType ?? "bar-crowd",
       performanceDate: formatDate(input.performedAt),
+      startTime: input.startTime ?? null,
+      endTime: input.endTime ?? null,
+      timeOfDay: timeOfDayLabel(input.startTime),
       numberOfSets: input.numSets,
       targetDurationSec: input.targetDurationSec ?? null,
       songCountSent: includedCount,
@@ -323,6 +341,7 @@ export async function POST(req: Request) {
         "Put optional notable placement reasons in orderReasons by songId.",
         "Do not simply return the current order unless it is genuinely the best order.",
         "If keeping the same order, explain why in orderChangeSummary.reason.",
+        "Consider venue type, crowd setup, start time, end time, and time of day.",
         "Give practical live-performance feedback for a working band.",
         "If recommending moves, describe them as suggestions only.",
         "Return only JSON with the requested fields.",
@@ -370,7 +389,7 @@ orderReasons rules:
 - Do not provide a reason for every song.
 - Each reason under 140 characters.
 
-Consider venue, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
+Consider venue type, crowd setup, time of day, event preset, target duration, BPM flow, energy flow, singalong placement, female participation, crowd familiarity, peak-hour score, vocal fatigue, opener/closer candidates, avoid same artist back-to-back, avoid same genre back-to-back, avoid big BPM drops, and the already-filtered song pool. Mention venue type, seated/standing/mixed crowd posture, and gig time in Venue Fit or Energy Flow when relevant. Consider whether the gig likely starts as background music and builds later, whether early songs should be lower intensity, and whether late songs should lean higher singalong/dance/anthem material. Keep output concise: max 4 strengths, max 4 concerns, max 4 recommendedMoves, max 4 items in every other note array.\n\n${JSON.stringify(context)}`,
           },
         ],
         max_output_tokens: 6000,

@@ -13,6 +13,10 @@ type Setlist = {
   bandId: string | null;
   title: string | null;
   performedAt: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  venueType?: string | null;
+  crowdSetup?: string | null;
   createdAt: string;
   updatedAt: string;
   notes: string | null;
@@ -32,6 +36,13 @@ function dateInputValue(value: string | null) {
 function formatTitleDate(value: string) {
   const date = new Date(`${value}T12:00:00`);
   return date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return null;
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
+  return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function sortHistoryLists(lists: Setlist[]) {
@@ -222,6 +233,9 @@ export default function HistoryPage() {
                 </div>
                 <div className="mt-1 text-xs text-[var(--muted)]">
                   {plural(l.setCount ?? (l.songCount ? 1 : 0), "set")} &bull; {plural(l.songCount ?? 0, "song")}
+                  {(l.venueType || l.crowdSetup || l.startTime || l.endTime) && (
+                    <span> &bull; {l.venueType ?? "Venue type not set"} &bull; {l.crowdSetup ?? "Mixed"}{(l.startTime || l.endTime) ? ` &bull; ${formatTime(l.startTime) ?? "?"} - ${formatTime(l.endTime) ?? "?"}` : ""}</span>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">

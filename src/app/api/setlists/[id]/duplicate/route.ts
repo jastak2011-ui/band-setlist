@@ -27,8 +27,8 @@ export async function POST(req: Request, context: Params) {
   await transaction(async (client) => {
     await client.query(
       `
-      INSERT INTO setlists (id, venue_id, band_id, title, performed_at, created_at, updated_at, notes)
-      VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+      INSERT INTO setlists (id, venue_id, band_id, title, performed_at, start_time, end_time, created_at, updated_at, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
       `,
       [
         newSetlistId,
@@ -36,6 +36,8 @@ export async function POST(req: Request, context: Params) {
         parsed.data.bandId !== undefined ? parsed.data.bandId : source.band_id,
         source.title ? `${source.title} (Copy)` : "Setlist copy",
         source.performed_at,
+        source.start_time,
+        source.end_time,
         source.notes,
       ],
     );

@@ -27,7 +27,7 @@ type Song = {
 type SetlistStrategy = "balanced" | "high-energy" | "dance-heavy" | "singalong-heavy" | "acoustic-chill" | "build-slowly";
 type SetBuildEventType = "bar-crowd" | "brewery" | "private-party" | "wedding" | "corporate-event";
 type Band = { id: string; name: string };
-type Venue = { id: string; name: string };
+type Venue = { id: string; name: string; venueType: string | null; crowdSetup: string | null };
 type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
 type Built = { index: number; songs: BuiltSong[] };
 type SetAnalysisReason = { setIndex: number; songId: string; title: string; reasons: string[] };
@@ -71,6 +71,13 @@ type ImportedSong = { title: string; artist: string; setIndex: number; importInd
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
 
+const venueTypeToEventType: Record<string, SetBuildEventType> = {
+  "Bar Crowd": "bar-crowd",
+  Brewery: "brewery",
+  "Private Party": "private-party",
+  Wedding: "wedding",
+  "Corporate Event": "corporate-event",
+};
 
 function normalizeNameForMatch(value: string) {
   return value
@@ -615,6 +622,8 @@ export default function BuilderPage() {
   const [bandId, setBandId] = useState("");
   const [venueId, setVenueId] = useState("");
   const [performedAt, setPerformedAt] = useState(todayForDateInput);
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
   const [numSets, setNumSets] = useState(2);
   const [strategy, setStrategy] = useState<SetlistStrategy>("balanced");
   const [eventType, setEventType] = useState<SetBuildEventType>("bar-crowd");
@@ -654,6 +663,14 @@ export default function BuilderPage() {
     if (sets) return sets;
     return chunkSongsInOrder(currentAnalysisSongs, numSets);
   }, [currentAnalysisSongs, numSets, sets]);
+
+  useEffect(() => {
+    if (!selectedVenue?.venueType) return;
+    const mapped = venueTypeToEventType[selectedVenue.venueType];
+    if (!mapped) return;
+    setEventType(mapped);
+    setSetAnalysis(null);
+  }, [selectedVenue?.id, selectedVenue?.venueType]);
 
   const load = useCallback(async () => {
     try {
@@ -952,6 +969,10 @@ export default function BuilderPage() {
           venueName: selectedVenue?.name,
           eventType,
           performedAt,
+          startTime: startTime || undefined,
+          endTime: endTime || undefined,
+          venueType: selectedVenue?.venueType ?? undefined,
+          crowdSetup: selectedVenue?.crowdSetup ?? undefined,
           numSets,
           sets: analysisSetsPayload(),
         }),
@@ -1041,7 +1062,7 @@ export default function BuilderPage() {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bandId, venueId, title: generatedTitle, performedAt: `${performedAt}T12:00:00`, sets: sets.map((s) => s.songs.map((x) => x.id)) }),
+      body: JSON.stringify({ bandId, venueId, title: generatedTitle, performedAt: `${performedAt}T12:00:00`, startTime: startTime || null, endTime: endTime || null, sets: sets.map((s) => s.songs.map((x) => x.id)) }),
     });
     const data = await r.json().catch(() => null);
     setBusy(false);
@@ -1110,6 +1131,21 @@ export default function BuilderPage() {
               Performance date
               <input type="date" className="input mt-1" value={performedAt} onChange={(e) => setPerformedAt(e.target.value)} />
             </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm text-[var(--muted)]">
+                Start Time
+                <input type="time" className="input mt-1" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              </label>
+              <label className="block text-sm text-[var(--muted)]">
+                End Time
+                <input type="time" className="input mt-1" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+              </label>
+            </div>
+            {selectedVenue && (
+              <div className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-[var(--muted)]">
+                Venue context: {selectedVenue.venueType ?? "No venue type"} - {selectedVenue.crowdSetup ?? "Mixed"}
+              </div>
+            )}
             <label className="block text-sm text-[var(--muted)]">
               Number of sets
               <input type="number" min={1} max={12} className="input mt-1" value={numSets} onChange={(e) => changeNumSets(Number(e.target.value))} />
@@ -1540,5 +1576,3 @@ function ScoringDetails({ label, details }: { label: string; details: Array<{ la
     </details>
   );
 }
-
-

@@ -7,6 +7,8 @@ type Params = { params: Promise<{ id: string }> };
 type ExportSetlist = DbSetlist & {
   venueName: string;
   bandName: string | null;
+  venueType: string | null;
+  crowdSetup: string | null;
 };
 
 type ExportSet = {
@@ -23,7 +25,7 @@ export const dynamic = "force-dynamic";
 async function loadSetlist(id: string): Promise<ExportSetlist | null> {
   const result = await query(
     `
-    SELECT sl.*, v.name AS venue_name, b.name AS band_name
+    SELECT sl.*, v.name AS venue_name, v.venue_type, v.crowd_setup, b.name AS band_name
     FROM setlists sl
     JOIN venues v ON v.id = sl.venue_id
     LEFT JOIN bands b ON b.id = sl.band_id
@@ -36,6 +38,8 @@ async function loadSetlist(id: string): Promise<ExportSetlist | null> {
   return {
     ...mapSetlist(row),
     venueName: row.venue_name as string,
+    venueType: (row.venue_type as string | null) ?? null,
+    crowdSetup: (row.crowd_setup as string | null) ?? null,
     bandName: (row.band_name as string | null) ?? null,
   };
 }
@@ -103,7 +107,11 @@ function createBpmPrompterCsv(setlist: ExportSetlist, sets: ExportSet[]) {
     csvRow(["gig", "", "", "", "", ""]),
     csvRow(["band", "", "", setlist.bandName ?? "", "", ""]),
     csvRow(["venue", "", "", setlist.venueName, "", ""]),
+    csvRow(["venue_type", "", "", setlist.venueType ?? "", "", ""]),
+    csvRow(["crowd_setup", "", "", setlist.crowdSetup ?? "", "", ""]),
     csvRow(["performance_date", "", "", setlist.performedAt ? setlist.performedAt.toISOString().slice(0, 10) : "", "", ""]),
+    csvRow(["start_time", "", "", setlist.startTime ?? "", "", ""]),
+    csvRow(["end_time", "", "", setlist.endTime ?? "", "", ""]),
     csvRow(["setlist_title", "", "", setlist.title ?? "", "", ""]),
     csvRow(["total_duration", "", "", totalSeconds > 0 ? formatDuration(totalSeconds) : "", "", ""]),
   ];

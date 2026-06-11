@@ -9,6 +9,8 @@ const patchBody = z.object({
   bandId: z.string().nullable().optional(),
   title: z.string().max(200).nullable().optional(),
   performedAt: z.string().nullable().optional(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   sets: z.array(z.array(z.string()).min(0)).min(1).optional(),
 });
 
@@ -17,7 +19,7 @@ export const dynamic = "force-dynamic";
 async function getSetlistDetail(id: string) {
   const listResult = await query(
     `
-    SELECT sl.*, v.name AS venue_name, b.name AS band_name
+    SELECT sl.*, v.name AS venue_name, v.venue_type, v.crowd_setup, b.name AS band_name
     FROM setlists sl
     JOIN venues v ON v.id = sl.venue_id
     LEFT JOIN bands b ON b.id = sl.band_id
@@ -66,6 +68,8 @@ async function getSetlistDetail(id: string) {
     setlist: {
       ...mapSetlist(list),
       venueName: list.venue_name as string,
+      venueType: (list.venue_type as string | null) ?? null,
+      crowdSetup: (list.crowd_setup as string | null) ?? null,
       bandName: (list.band_name as string | null) ?? null,
     },
     sets: outSets,
@@ -112,6 +116,14 @@ export async function PATCH(req: Request, context: Params) {
     if (parsed.data.performedAt !== undefined) {
       params.push(parsed.data.performedAt ? new Date(parsed.data.performedAt) : null);
       updates.push(`performed_at = $${params.length}`);
+    }
+    if (parsed.data.startTime !== undefined) {
+      params.push(parsed.data.startTime || null);
+      updates.push(`start_time = $${params.length}`);
+    }
+    if (parsed.data.endTime !== undefined) {
+      params.push(parsed.data.endTime || null);
+      updates.push(`end_time = $${params.length}`);
     }
     if (updates.length > 0) {
       await client.query(`UPDATE setlists SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $1`, params);

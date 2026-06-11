@@ -8,6 +8,8 @@ const saveBody = z.object({
   bandId: z.string().optional().nullable(),
   title: z.string().max(200).optional().nullable(),
   performedAt: z.string().optional().nullable(),
+  startTime: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
   notes: z.string().max(4000).optional().nullable(),
   sets: z.array(z.array(z.string())).min(1),
 });
@@ -42,6 +44,8 @@ export async function GET(req: Request) {
       `
       SELECT
         sl.*,
+        v.venue_type,
+        v.crowd_setup,
         CASE
           WHEN COUNT(DISTINCT ss.id) > 0 THEN COUNT(DISTINCT ss.id)
           WHEN COUNT(sss.id) FILTER (WHERE s.id IS NULL OR NOT (s.title ~* '^\\s*set\\s*[0-9]+\\s*$')) > 0 THEN 1
@@ -49,17 +53,20 @@ export async function GET(req: Request) {
         END AS set_count,
         COUNT(sss.id) FILTER (WHERE s.id IS NULL OR NOT (s.title ~* '^\\s*set\\s*[0-9]+\\s*$')) AS song_count
       FROM setlists sl
+      JOIN venues v ON v.id = sl.venue_id
       LEFT JOIN setlist_sets ss ON ss.setlist_id = sl.id
       LEFT JOIN setlist_set_songs sss ON sss.set_id = ss.id
       LEFT JOIN songs s ON s.id = sss.song_id
       ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
-      GROUP BY sl.id, sl.venue_id, sl.band_id, sl.title, sl.performed_at, sl.created_at, sl.updated_at, sl.notes
+      GROUP BY sl.id, sl.venue_id, sl.band_id, sl.title, sl.performed_at, sl.start_time, sl.end_time, sl.created_at, sl.updated_at, sl.notes, v.venue_type, v.crowd_setup
       ORDER BY sl.performed_at DESC NULLS LAST, sl.updated_at DESC, sl.created_at DESC
       `,
       params,
     );
     return privateJson(result.rows.map((row) => ({
       ...mapSetlist(row),
+      venueType: row.venue_type ?? null,
+      crowdSetup: row.crowd_setup ?? null,
       setCount: Number(row.set_count ?? 0),
       songCount: Number(row.song_count ?? 0),
     })));
@@ -84,10 +91,10 @@ export async function POST(req: Request) {
     await transaction(async (client) => {
       await client.query(
         `
-        INSERT INTO setlists (id, venue_id, band_id, title, performed_at, created_at, updated_at, notes)
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+        INSERT INTO setlists (id, venue_id, band_id, title, performed_at, start_time, end_time, created_at, updated_at, notes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
         `,
-        [setlistId, parsed.data.venueId, parsed.data.bandId ?? null, parsed.data.title ?? null, performedAt, parsed.data.notes ?? null],
+        [setlistId, parsed.data.venueId, parsed.data.bandId ?? null, parsed.data.title ?? null, performedAt, parsed.data.startTime || null, parsed.data.endTime || null, parsed.data.notes ?? null],
       );
 
       for (let i = 0; i < parsed.data.sets.length; i++) {
