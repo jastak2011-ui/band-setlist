@@ -33,7 +33,7 @@ async function getSetlistDetail(id: string) {
     `
     SELECT sl.*, v.name AS venue_name, v.venue_type, v.crowd_setup, b.name AS band_name
     FROM setlists sl
-    JOIN venues v ON v.id = sl.venue_id
+    LEFT JOIN venues v ON v.id = sl.venue_id
     LEFT JOIN bands b ON b.id = sl.band_id
     WHERE sl.id = $1
     `,
@@ -79,7 +79,7 @@ async function getSetlistDetail(id: string) {
   return {
     setlist: {
       ...mapSetlist(list),
-      venueName: list.venue_name as string,
+      venueName: (list.venue_name as string | null) ?? null,
       venueType: (list.venue_type as string | null) ?? null,
       crowdSetup: (list.crowd_setup as string | null) ?? null,
       bandName: (list.band_name as string | null) ?? null,

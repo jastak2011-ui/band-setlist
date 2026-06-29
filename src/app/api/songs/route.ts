@@ -125,6 +125,9 @@ export async function POST(req: Request) {
     }
 
     const result = await findOrCreateSong(parsed.data);
+    if (!result.song) {
+      return NextResponse.json({ error: result.reason ?? "Song was skipped." }, { status: 400 });
+    }
     return NextResponse.json({ ...result.song, importStatus: result.status }, { status: result.status === "created" ? 201 : 200 });
   } catch (error) {
     return authErrorResponse(error);

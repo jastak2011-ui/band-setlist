@@ -392,6 +392,11 @@ export async function POST(req: Request) {
       const result = await findOrCreateSong({
         ...input,
       });
+      if (!result.song) {
+        errors.push(`Row ${index + 1}: ${result.reason ?? "Song was skipped."}`);
+        counts.skipped += 1;
+        continue;
+      }
 
       ids.push(result.song.id);
       if (result.status === "created") counts.created += 1;
@@ -425,6 +430,11 @@ export async function POST(req: Request) {
       }
       for (const [index, item] of pendingOnSongImports.entries()) {
         const result = results[index];
+        if (!result.song) {
+          errors.push(`Row ${item.row}: ${result.reason ?? "Song was skipped."}`);
+          counts.skipped += 1;
+          continue;
+        }
         ids.push(result.song.id);
         if (result.status === "created") counts.created += 1;
         if (result.status === "updated") {

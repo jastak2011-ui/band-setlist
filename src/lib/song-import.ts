@@ -34,8 +34,17 @@ export type SongImportInput = {
 };
 
 export type SongImportResult = {
-  song: DbSong;
-  status: "created" | "matched" | "updated";
+  song: DbSong | null;
+  status: "created" | "matched" | "updated" | "skipped";
+  input: SongImportInput;
+  reason?: string;
+};
+
+export type SongImportOptions = {
+  matchExisting?: boolean;
+  importMissing?: boolean;
+  updateExistingMetadata?: boolean;
+  preserveBandSetlistMetadata?: boolean;
 };
 
 const importFields = [
@@ -68,6 +77,19 @@ const importFields = [
   ["onsongProviderUri", "onsong_provider_uri"],
 ] as const;
 
+const onsongIdentityFields = new Set<string>([
+  "onsongSongId",
+  "onsongFilepath",
+  "onsongHash",
+  "onsongContent",
+  "onsongLyrics",
+  "onsongUser",
+  "onsongProviderName",
+  "onsongProviderUri",
+]);
+
+const safeOnSongMetadataFields = new Set<string>(["title", "artist", "musicalKey", "bpm", "durationSec"]);
+
 export function normalizeSongIdentity(value: string) {
   return value
     .normalize("NFKD")
@@ -90,12 +112,47 @@ export function sameSongIdentity(a: { title: string; artist: string }, b: { titl
     && normalizeSongIdentity(a.artist) === normalizeSongIdentity(b.artist);
 }
 
-export async function findOrCreateSong(input: SongImportInput): Promise<SongImportResult> {
-  return (await findOrCreateSongs([input]))[0];
+function normalizedOptional(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
 }
 
-export async function findOrCreateSongs(inputs: SongImportInput[]): Promise<SongImportResult[]> {
+function sameOnSongHash(a: unknown, b: unknown) {
+  if (!hasValue(a) || !hasValue(b)) return false;
+  return String(a) === String(b);
+}
+
+function findExistingSong(existingSongs: Record<string, unknown>[], input: SongImportInput) {
+  const onsongSongId = normalizedOptional(input.onsongSongId);
+  if (onsongSongId) {
+    const existing = existingSongs.find((row) => normalizedOptional(row.onsong_song_id) === onsongSongId);
+    if (existing) return existing;
+  }
+
+  const filepath = normalizedOptional(input.onsongFilepath);
+  if (filepath) {
+    const existing = existingSongs.find((row) => normalizedOptional(row.onsong_filepath) === filepath);
+    if (existing) return existing;
+  }
+
+  if (hasValue(input.onsongHash)) {
+    const existing = existingSongs.find((row) => sameOnSongHash(row.onsong_hash, input.onsongHash));
+    if (existing) return existing;
+  }
+
+  return existingSongs.find((row) => sameSongIdentity(input, { title: String(row.title ?? ""), artist: String(row.artist ?? "") }));
+}
+
+export async function findOrCreateSong(input: SongImportInput, options?: SongImportOptions): Promise<SongImportResult> {
+  return (await findOrCreateSongs([input], options))[0];
+}
+
+export async function findOrCreateSongs(inputs: SongImportInput[], options: SongImportOptions = {}): Promise<SongImportResult[]> {
   if (inputs.length === 0) return [];
+  const useLegacyUpdateBehavior = Object.keys(options).length === 0;
+  const matchExisting = options.matchExisting ?? true;
+  const importMissing = options.importMissing ?? true;
+  const updateExistingMetadata = options.updateExistingMetadata ?? true;
+  const preserveBandSetlistMetadata = options.preserveBandSetlistMetadata ?? true;
 
   return transaction(async (client) => {
     const existingRows = await client.query("SELECT * FROM songs");
@@ -107,16 +164,37 @@ export async function findOrCreateSongs(inputs: SongImportInput[]): Promise<Song
       const normalizedArtist = normalizeSongIdentity(input.artist);
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [normalizedTitle, normalizedArtist]);
 
-      const existing = existingSongs.find((row) => sameSongIdentity(input, { title: row.title, artist: row.artist }));
+      const existing = matchExisting ? findExistingSong(existingSongs, input) : null;
 
       if (existing) {
         const updates: string[] = [];
         const params: unknown[] = [existing.id];
         for (const [inputKey, column] of importFields) {
+          if (!useLegacyUpdateBehavior) {
+            if (!onsongIdentityFields.has(inputKey) && !updateExistingMetadata) continue;
+            if (updateExistingMetadata && !onsongIdentityFields.has(inputKey) && !safeOnSongMetadataFields.has(inputKey)) continue;
+          }
           const incoming = input[inputKey];
-          if (hasValue(incoming) && !hasValue(existing[column])) {
+          const shouldUpdate = hasValue(incoming)
+            && (preserveBandSetlistMetadata || onsongIdentityFields.has(inputKey) ? !hasValue(existing[column]) : true);
+          if (shouldUpdate) {
             params.push(incoming);
             updates.push(`${column} = $${params.length}`);
+          }
+        }
+
+        if (updateExistingMetadata) {
+          const directFields = [
+            ["title", "title"],
+            ["artist", "artist"],
+          ] as const;
+          for (const [inputKey, column] of directFields) {
+            const incoming = input[inputKey]?.trim();
+            const shouldUpdate = hasValue(incoming) && (preserveBandSetlistMetadata ? !hasValue(existing[column]) : true);
+            if (shouldUpdate) {
+              params.push(incoming);
+              updates.push(`${column} = $${params.length}`);
+            }
           }
         }
 
@@ -126,11 +204,16 @@ export async function findOrCreateSongs(inputs: SongImportInput[]): Promise<Song
             params,
           );
           Object.assign(existing, updated.rows[0]);
-          results.push({ song: mapSong(updated.rows[0]), status: "updated" });
+          results.push({ song: mapSong(updated.rows[0]), status: "updated", input });
           continue;
         }
 
-        results.push({ song: mapSong(existing), status: "matched" });
+        results.push({ song: mapSong(existing), status: "matched", input });
+        continue;
+      }
+
+      if (!importMissing) {
+        results.push({ song: null, status: "skipped", input, reason: "No matching song found and Import missing songs is off." });
         continue;
       }
 
@@ -192,7 +275,7 @@ export async function findOrCreateSongs(inputs: SongImportInput[]): Promise<Song
       );
 
       existingSongs.push(inserted.rows[0]);
-      results.push({ song: mapSong(inserted.rows[0]), status: "created" });
+      results.push({ song: mapSong(inserted.rows[0]), status: "created", input });
     }
 
     return results;

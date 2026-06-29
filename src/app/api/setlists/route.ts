@@ -57,7 +57,7 @@ export async function GET(req: Request) {
         END AS set_count,
         COUNT(sss.id) FILTER (WHERE s.id IS NULL OR NOT (s.title ~* '^\\s*set\\s*[0-9]+\\s*$')) AS song_count
       FROM setlists sl
-      JOIN venues v ON v.id = sl.venue_id
+      LEFT JOIN venues v ON v.id = sl.venue_id
       LEFT JOIN setlist_sets ss ON ss.setlist_id = sl.id
       LEFT JOIN setlist_set_songs sss ON sss.set_id = ss.id
       LEFT JOIN songs s ON s.id = sss.song_id

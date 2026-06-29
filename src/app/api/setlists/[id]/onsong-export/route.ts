@@ -16,7 +16,7 @@ async function loadSetlist(id: string) {
     `
     SELECT sl.*, v.name AS venue_name, b.name AS band_name
     FROM setlists sl
-    JOIN venues v ON v.id = sl.venue_id
+    LEFT JOIN venues v ON v.id = sl.venue_id
     LEFT JOIN bands b ON b.id = sl.band_id
     WHERE sl.id = $1
     `,
@@ -26,7 +26,7 @@ async function loadSetlist(id: string) {
   if (!row) return null;
   return {
     ...mapSetlist(row),
-    venueName: row.venue_name as string,
+    venueName: (row.venue_name as string | null) ?? "Not specified",
     bandName: (row.band_name as string | null) ?? null,
   };
 }

@@ -5,6 +5,7 @@ type ArchiveDictionary = { [key: string]: BplistObject };
 export type OnSongArchiveType = "SongSet" | "Single Song" | "Unknown archive with songs";
 export type ParsedOnSongArchive = {
   archiveType: OnSongArchiveType;
+  title?: string | null;
   songs: SongImportInput[];
 };
 
@@ -65,6 +66,12 @@ function titleFromSong(objects: BplistObject[], song: ArchiveDictionary) {
 
 function artistFromSong(objects: BplistObject[], song: ArchiveDictionary) {
   return stringValue(objects, song.byline) ?? "Unknown Artist";
+}
+
+function titleFromSongSet(objects: BplistObject[], root: ArchiveDictionary) {
+  return stringValue(objects, root.title)
+    ?? stringValue(objects, root.name)
+    ?? null;
 }
 
 function songFromArchivedObject(objects: BplistObject[], song: BplistObject | undefined): SongImportInput | null {
@@ -129,7 +136,7 @@ export function parseOnSongArchive(buffer: Buffer): ParsedOnSongArchive {
   const root = deref(objects, isDictionary(archive.$top) ? archive.$top.root : undefined);
   const rootClass = className(objects, root);
   if (isDictionary(root) && rootClass === "SongSet") {
-    return { archiveType: "SongSet", songs: songsFromSongSet(objects, root) };
+    return { archiveType: "SongSet", title: titleFromSongSet(objects, root), songs: songsFromSongSet(objects, root) };
   }
   if (isDictionary(root) && rootClass === "Song") {
     const song = songFromArchivedObject(objects, root);

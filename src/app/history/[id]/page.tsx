@@ -1364,7 +1364,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
           </div>
           <div className="print-only mt-2 text-sm">
             <div>Band: {data.setlist.bandName ?? "No band assigned"}</div>
-            <div>Venue: {data.setlist.venueName ?? "Unknown venue"}</div>
+            <div>Venue: {data.setlist.venueName ?? "Not specified"}</div>
             <div>Venue type: {data.setlist.venueType ?? "Not set"}</div>
             <div>Crowd setup: {data.setlist.crowdSetup ?? "Mixed"}</div>
             <div>Performance date: {formatDate(data.setlist.performedAt)}</div>

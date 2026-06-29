@@ -119,7 +119,7 @@ async function bootstrapDatabase(db: Queryable) {
 
     CREATE TABLE IF NOT EXISTS setlists (
       id TEXT PRIMARY KEY,
-      venue_id TEXT NOT NULL REFERENCES venues(id) ON DELETE CASCADE,
+      venue_id TEXT REFERENCES venues(id) ON DELETE SET NULL,
       band_id TEXT REFERENCES bands(id) ON DELETE SET NULL,
       title TEXT,
       performed_at TIMESTAMPTZ,
@@ -168,7 +168,7 @@ async function bootstrapDatabase(db: Queryable) {
       song_id TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
       setlist_id TEXT NOT NULL REFERENCES setlists(id) ON DELETE CASCADE,
       band_id TEXT REFERENCES bands(id) ON DELETE SET NULL,
-      venue_id TEXT NOT NULL REFERENCES venues(id) ON DELETE CASCADE,
+      venue_id TEXT REFERENCES venues(id) ON DELETE SET NULL,
       performance_date TIMESTAMPTZ,
       crowd_response_score INTEGER CHECK (crowd_response_score IS NULL OR (crowd_response_score >= 1 AND crowd_response_score <= 10)),
       notes TEXT,
@@ -255,6 +255,7 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "songs", "onsong_provider_uri", "TEXT");
   await addColumnIfMissing(db, "songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlists", "band_id", "TEXT REFERENCES bands(id) ON DELETE SET NULL");
+  await db.query("ALTER TABLE setlists ALTER COLUMN venue_id DROP NOT NULL");
   await addColumnIfMissing(db, "setlists", "start_time", "TIME");
   await addColumnIfMissing(db, "setlists", "end_time", "TIME");
   await addColumnIfMissing(db, "setlists", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
@@ -263,6 +264,7 @@ async function bootstrapDatabase(db: Queryable) {
   await addColumnIfMissing(db, "setlist_set_songs", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await addColumnIfMissing(db, "setlist_set_songs", "locked_with_next", "BOOLEAN NOT NULL DEFAULT FALSE");
+  await db.query("ALTER TABLE song_performance_ratings ALTER COLUMN venue_id DROP NOT NULL");
   await addColumnIfMissing(db, "app_users", "display_name", "TEXT");
   await addColumnIfMissing(db, "app_users", "disabled_at", "TIMESTAMPTZ");
   await addColumnIfMissing(db, "app_users", "last_seen_at", "TIMESTAMPTZ");
@@ -314,7 +316,7 @@ export type DbSong = {
 
 export type DbSetlist = {
   id: string;
-  venueId: string;
+  venueId: string | null;
   bandId: string | null;
   title: string | null;
   performedAt: Date | null;
