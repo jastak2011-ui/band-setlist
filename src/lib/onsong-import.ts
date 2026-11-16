@@ -7,6 +7,7 @@ export type ParsedOnSongArchive = {
   archiveType: OnSongArchiveType;
   title?: string | null;
   songs: SongImportInput[];
+  sets?: SongImportInput[][];
 };
 
 function isUid(value: BplistObject | undefined): value is BplistUid {
@@ -113,6 +114,23 @@ function songsFromSongSet(objects: BplistObject[], root: ArchiveDictionary) {
     .filter((song): song is SongImportInput => Boolean(song?.title));
 }
 
+function splitSongSetMarkers(songs: SongImportInput[]) {
+  const sets: SongImportInput[][] = [[]];
+  let currentSetIndex = 0;
+  for (const song of songs) {
+    const marker = song.title.trim().match(/^set\s*(\d+)$/i);
+    if (marker && (!song.artist || /^unknown artist$/i.test(song.artist))) {
+      const targetIndex = Math.max(0, Number(marker[1]) - 1);
+      while (sets.length <= targetIndex) sets.push([]);
+      currentSetIndex = targetIndex;
+      continue;
+    }
+    sets[currentSetIndex].push(song);
+  }
+  const nonEmpty = sets.filter((set) => set.length > 0);
+  return nonEmpty.length > 0 ? nonEmpty : [];
+}
+
 function scanSongObjects(objects: BplistObject[]) {
   const seen = new Set<string>();
   const songs: SongImportInput[] = [];
@@ -136,7 +154,9 @@ export function parseOnSongArchive(buffer: Buffer): ParsedOnSongArchive {
   const root = deref(objects, isDictionary(archive.$top) ? archive.$top.root : undefined);
   const rootClass = className(objects, root);
   if (isDictionary(root) && rootClass === "SongSet") {
-    return { archiveType: "SongSet", title: titleFromSongSet(objects, root), songs: songsFromSongSet(objects, root) };
+    const sourceSongs = songsFromSongSet(objects, root);
+    const sets = splitSongSetMarkers(sourceSongs);
+    return { archiveType: "SongSet", title: titleFromSongSet(objects, root), songs: sets.flat(), sets };
   }
   if (isDictionary(root) && rootClass === "Song") {
     const song = songFromArchivedObject(objects, root);

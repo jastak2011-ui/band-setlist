@@ -4,7 +4,7 @@ import { mapSetlist, query, transaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 
 const saveBody = z.object({
-  venueId: z.string(),
+  venueId: z.string().nullable().optional(),
   bandId: z.string().optional().nullable(),
   title: z.string().max(200).optional().nullable(),
   performedAt: z.string().optional().nullable(),
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
         INSERT INTO setlists (id, venue_id, band_id, title, performed_at, start_time, end_time, created_at, updated_at, notes)
         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
         `,
-        [setlistId, parsed.data.venueId, parsed.data.bandId ?? null, parsed.data.title ?? null, performedAt, parsed.data.startTime || null, parsed.data.endTime || null, parsed.data.notes ?? null],
+        [setlistId, parsed.data.venueId ?? null, parsed.data.bandId ?? null, parsed.data.title ?? null, performedAt, parsed.data.startTime || null, parsed.data.endTime || null, parsed.data.notes ?? null],
       );
 
       for (let i = 0; i < parsed.data.sets.length; i++) {

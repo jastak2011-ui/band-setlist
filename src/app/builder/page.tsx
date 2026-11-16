@@ -29,7 +29,27 @@ type SetBuildEventType = "bar-crowd" | "brewery" | "restaurant" | "outdoor" | "p
 type AiProvider = "openai" | "anthropic";
 type Band = { id: string; name: string };
 type Venue = { id: string; name: string; venueType: string | null; crowdSetup: string | null };
-type BuiltSong = { position: number; id: string; title: string; artist: string; bpm: number | null; durationSec: number | null; genre?: string | null; importIndex?: number };
+type BuiltSong = {
+  position: number;
+  id: string;
+  title: string;
+  artist: string;
+  bpm: number | null;
+  durationSec: number | null;
+  genre?: string | null;
+  musicalKey?: string | null;
+  energy?: number | null;
+  crowdScore?: number | null;
+  danceability?: number | null;
+  vocalDifficulty?: number | null;
+  singalongScore?: number | null;
+  peakHourScore?: number | null;
+  transitionFlexibility?: number | null;
+  femaleParticipationScore?: number | null;
+  openerCandidate?: boolean | null;
+  closerCandidate?: boolean | null;
+  importIndex?: number;
+};
 type Built = { index: number; songs: BuiltSong[] };
 type SetAnalysisReason = { setIndex: number; songId: string; title: string; reasons: string[] };
 type SetAnalysisScore = { songId: string; title: string; score: number };
@@ -83,6 +103,17 @@ type AiOrderComparison = { movedCount: number; unchangedCount: number; biggestMo
 type ImportedSong = { title: string; artist: string; setIndex: number; importIndex: number };
 type ImportSummary = { total: number; matched: number; unmatched: ImportedSong[]; detected?: ImportDetectedMetadata };
 type ImportDetectedMetadata = { fileName: string; bandName: string | null; venueName: string | null; performanceDate: string | null; setCount: number };
+type OnSongImportDetail = { row: number; title: string; artist: string; status: "created" | "matched" | "updated" | "skipped"; reason: string };
+type OnSongImportSummary = {
+  title: string | null;
+  songsProcessed: number;
+  matched: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  details: OnSongImportDetail[];
+};
 
 const venueTypeToEventType: Record<string, SetBuildEventType> = {
   "Bar Crowd": "bar-crowd",
@@ -655,6 +686,7 @@ export default function BuilderPage() {
   const [performedAt, setPerformedAt] = useState(todayForDateInput);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const [setlistTitle, setSetlistTitle] = useState("");
   const [numSets, setNumSets] = useState(2);
   const [strategy, setStrategy] = useState<SetlistStrategy>("balanced");
   const [eventType, setEventType] = useState<SetBuildEventType>("bar-crowd");
@@ -670,6 +702,9 @@ export default function BuilderPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const [onSongImportSummary, setOnSongImportSummary] = useState<OnSongImportSummary | null>(null);
+  const [onSongImportMissing, setOnSongImportMissing] = useState(false);
+  const [onSongImportBusy, setOnSongImportBusy] = useState(false);
   const [addingImportKey, setAddingImportKey] = useState<string | null>(null);
   const [replacementPool, setReplacementPool] = useState<BuiltSong[]>([]);
   const [replacementCursor, setReplacementCursor] = useState(0);
@@ -682,6 +717,7 @@ export default function BuilderPage() {
   const selectedBand = useMemo(() => bands.find((band) => band.id === bandId) ?? null, [bandId, bands]);
   const selectedVenue = useMemo(() => venues.find((venue) => venue.id === venueId) ?? null, [venueId, venues]);
   const generatedTitle = selectedBand && selectedVenue && performedAt ? `${selectedBand.name} - ${selectedVenue.name} - ${formatTitleDate(performedAt)}` : "";
+  const historyTitle = setlistTitle.trim() || generatedTitle;
   const holidayOverridesOutsideSeason = useMemo(() => {
     if (isHolidayActiveDate(performedAt)) return [];
     return songs.filter((song) => holidayOverrideIds.has(song.id) && selected.has(song.id) && isHolidayGenre(song.genre));
@@ -850,6 +886,75 @@ export default function BuilderPage() {
     });
     setMsg(`${importStatus === "created" ? "Added" : "Reused"} ${created.title} ${importStatus === "updated" ? "and filled missing metadata " : ""}for Set ${Math.min(importedSong.setIndex, clampSetCount(numSets))}.`);
   }
+
+  async function importOnSongArchive(file: File | null) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".archive")) {
+      setMsg("Choose an OnSong .archive file.");
+      return;
+    }
+    if ((sets?.some((set) => set.songs.length > 0) || selected.size > 0) && !window.confirm("Replace the current unsaved Set Builder work with this OnSong archive?")) {
+      return;
+    }
+
+    const form = new FormData();
+    form.set("file", file);
+    form.set("importMissingSongs", String(onSongImportMissing));
+    setOnSongImportBusy(true);
+    setMsg(null);
+    try {
+      const response = await fetch("/api/builder/import-onsong", {
+        method: "POST",
+        body: form,
+        credentials: "same-origin",
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) as {
+        ok?: boolean;
+        error?: unknown;
+        title?: string | null;
+        songsProcessed?: number;
+        matched?: number;
+        created?: number;
+        updated?: number;
+        skipped?: number;
+        errors?: string[];
+        details?: OnSongImportDetail[];
+        sets?: Built[];
+      } : null;
+      if (!response.ok || !data?.ok || !Array.isArray(data.sets)) {
+        setMsg(typeof data?.error === "string" ? data.error : text || `OnSong archive import failed (${response.status}).`);
+        return;
+      }
+
+      const nextSets = data.sets;
+      const importedSongIds = nextSets.flatMap((set) => set.songs.map((song) => song.id));
+      setSelected(new Set(importedSongIds));
+      setHolidayOverrideIds(new Set());
+      setSets(nextSets);
+      setNumSets(nextSets.length);
+      setSetAnalysis(null);
+      setAiAnalysis(null);
+      setImportSummary(null);
+      setOnSongImportSummary({
+        title: data.title ?? null,
+        songsProcessed: data.songsProcessed ?? importedSongIds.length,
+        matched: data.matched ?? 0,
+        created: data.created ?? 0,
+        updated: data.updated ?? 0,
+        skipped: data.skipped ?? 0,
+        errors: Array.isArray(data.errors) ? data.errors : [],
+        details: Array.isArray(data.details) ? data.details : [],
+      });
+      if (data.title?.trim()) setSetlistTitle(data.title.trim());
+      await load();
+      setMsg(`Imported ${importedSongIds.length} song${importedSongIds.length === 1 ? "" : "s"} from ${file.name} in original order. Nothing has been saved to Set History yet.`);
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "OnSong archive import failed.");
+    } finally {
+      setOnSongImportBusy(false);
+    }
+  }
   async function build() {
     setBusy(true);
     setMsg(null);
@@ -895,6 +1000,59 @@ export default function BuilderPage() {
     setSetAnalysis(null);
     setAiAnalysis(null);
     setMsg("Sets reshuffled.");
+  }
+
+  function normalizeBuiltSets(nextSets: Built[]) {
+    return nextSets.map((set, setIndex) => ({
+      ...set,
+      index: setIndex + 1,
+      songs: set.songs.map((song, songIndex) => ({ ...song, position: songIndex + 1 })),
+    }));
+  }
+
+  function moveBuiltSong(setIndex: number, songIndex: number, direction: -1 | 1) {
+    setSets((current) => {
+      if (!current) return current;
+      const next = current.map((set) => ({ ...set, songs: [...set.songs] }));
+      const setPosition = next.findIndex((set) => set.index === setIndex);
+      if (setPosition < 0) return current;
+      const source = next[setPosition];
+      const targetSongIndex = songIndex + direction;
+      if (targetSongIndex >= 0 && targetSongIndex < source.songs.length) {
+        [source.songs[songIndex], source.songs[targetSongIndex]] = [source.songs[targetSongIndex], source.songs[songIndex]];
+        return normalizeBuiltSets(next);
+      }
+      const targetSet = next[setPosition + direction];
+      if (!targetSet) return current;
+      const [song] = source.songs.splice(songIndex, 1);
+      targetSet.songs.splice(direction < 0 ? targetSet.songs.length : 0, 0, song);
+      return normalizeBuiltSets(next);
+    });
+    setSetAnalysis(null);
+    setAiAnalysis(null);
+  }
+
+  function removeBuiltSong(setIndex: number, songIndex: number) {
+    setSets((current) => current ? normalizeBuiltSets(current.map((set) => (
+      set.index === setIndex ? { ...set, songs: set.songs.filter((_, index) => index !== songIndex) } : set
+    ))) : current);
+    setSetAnalysis(null);
+    setAiAnalysis(null);
+  }
+
+  function addSelectedSongsToSet(setIndex: number) {
+    setSets((current) => {
+      if (!current) return current;
+      const usedIds = new Set(current.flatMap((set) => set.songs.map((song) => song.id)));
+      const additions = songs.filter((song) => selected.has(song.id) && !usedIds.has(song.id));
+      if (additions.length === 0) return current;
+      return normalizeBuiltSets(current.map((set) => set.index === setIndex ? {
+        ...set,
+        songs: [...set.songs, ...additions.map((song, index) => ({ ...song, position: set.songs.length + index + 1 }))],
+      } : set));
+    });
+    setSetAnalysis(null);
+    setAiAnalysis(null);
   }
 
   function replaceSong(setIndex: number, songId: string) {
@@ -1073,14 +1231,13 @@ export default function BuilderPage() {
 
   const saveRequirements = [
     !bandId ? "band" : null,
-    !venueId ? "venue" : null,
     !performedAt ? "performance date" : null,
   ].filter(Boolean);
   const saveHint = sets && saveRequirements.length > 0 ? `Choose a ${saveRequirements.join(", ")} before saving.` : null;
 
   async function save() {
-    if (!sets || !bandId || !venueId) {
-      setMsg("Pick a band and venue before saving.");
+    if (!sets || !bandId) {
+      setMsg("Pick a band before saving.");
       return;
     }
     if (!performedAt) {
@@ -1093,7 +1250,7 @@ export default function BuilderPage() {
       method: "POST",
       cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bandId, venueId, title: generatedTitle, performedAt: `${performedAt}T12:00:00`, startTime: startTime || null, endTime: endTime || null, sets: sets.map((s) => s.songs.map((x) => x.id)) }),
+      body: JSON.stringify({ bandId, venueId: venueId || null, title: historyTitle || null, performedAt: `${performedAt}T12:00:00`, startTime: startTime || null, endTime: endTime || null, sets: sets.map((s) => s.songs.map((x) => x.id)) }),
     });
     const data = await r.json().catch(() => null);
     setBusy(false);
@@ -1101,7 +1258,7 @@ export default function BuilderPage() {
       setMsg(data?.error ? JSON.stringify(data.error) : "Save failed.");
       return;
     }
-    setMsg(`Saved ${generatedTitle} to history.`);
+    setMsg(`Saved ${historyTitle || "setlist"} to history.`);
     if (data?.id) router.push(`/history/${data.id}`);
   }
 
@@ -1144,6 +1301,10 @@ export default function BuilderPage() {
 
         <div className="space-y-4">
           <div className="card space-y-3">
+            <label className="block text-sm text-[var(--muted)]">
+              Setlist title
+              <input className="input mt-1" value={setlistTitle} onChange={(e) => setSetlistTitle(e.target.value)} placeholder={generatedTitle || "Optional title"} />
+            </label>
             <label className="block text-sm text-[var(--muted)]">
               Band
               <select className="input mt-1" value={bandId} onChange={(e) => setBandId(e.target.value)}>
@@ -1216,7 +1377,7 @@ export default function BuilderPage() {
                 <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={saveStrongestForLater} onChange={(e) => setSaveStrongestForLater(e.target.checked)} /> Save strongest songs for later</label>
               </div>
             </div>
-            {generatedTitle && <div className="text-xs text-[var(--muted)]">History title: {generatedTitle}</div>}
+            {historyTitle && <div className="text-xs text-[var(--muted)]">History title: {historyTitle}</div>}
             <div className="rounded-lg border border-[var(--border)] px-3 py-3">
               <label className="block text-sm text-[var(--muted)]">
                 Import setlist HTML
@@ -1264,6 +1425,44 @@ export default function BuilderPage() {
                 </div>
               )}
             </div>
+            <div className="rounded-lg border border-[var(--border)] px-3 py-3">
+              <label className="block text-sm text-[var(--muted)]">
+                Import OnSong Archive
+                <input
+                  type="file"
+                  accept=".archive,application/octet-stream"
+                  className="input mt-1"
+                  disabled={onSongImportBusy}
+                  onChange={(event) => void importOnSongArchive(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label className="mt-3 flex items-center gap-2 text-xs text-[var(--muted)]">
+                <input type="checkbox" checked={onSongImportMissing} disabled={onSongImportBusy} onChange={(event) => setOnSongImportMissing(event.target.checked)} />
+                Import missing songs into the shared library
+              </label>
+              <p className="mt-2 text-xs text-[var(--muted)]">Existing songs are matched by OnSong ID, filepath, hash, then title and artist. Their Band Setlist metadata is left unchanged.</p>
+              {onSongImportSummary && (
+                <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
+                  <div className="font-medium">OnSong Import Complete{onSongImportSummary.title ? `: ${onSongImportSummary.title}` : ""}</div>
+                  <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                    <span>{onSongImportSummary.songsProcessed} songs processed</span>
+                    <span>{onSongImportSummary.matched} existing songs matched</span>
+                    <span>{onSongImportSummary.created} new songs created</span>
+                    <span>{onSongImportSummary.updated} identity links updated</span>
+                    <span>{onSongImportSummary.skipped} skipped</span>
+                    <span>{onSongImportSummary.errors.length} import errors</span>
+                  </div>
+                  {onSongImportSummary.details.length > 0 && (
+                    <details className="mt-2 text-[var(--muted)]">
+                      <summary className="cursor-pointer">View import details</summary>
+                      <ul className="mt-2 max-h-44 space-y-1 overflow-auto">
+                        {onSongImportSummary.details.slice(0, 50).map((detail) => <li key={`${detail.row}-${detail.title}`}>Setlist row {detail.row}: {detail.title} - {detail.artist} ({detail.status}){detail.reason ? ` - ${detail.reason}` : ""}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
             <button type="button" disabled={busy || selected.size === 0} className="btn btn-primary w-full" onClick={() => void build()}>{busy ? "Working..." : sets ? "Rebuild sets" : "Build sets"}</button>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button type="button" disabled={busy || aiBusy || selected.size === 0} className="btn btn-ghost w-full" onClick={() => void analyzeSetWithAi("openai")}>
@@ -1288,15 +1487,23 @@ export default function BuilderPage() {
                   <div key={st.index}>
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-medium text-[var(--accent)]">Set {st.index}</h3>
-                      <span className="mono text-xs text-[var(--muted)]">Total: {formatDuration(setDuration)}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="mono text-xs text-[var(--muted)]">Total: {formatDuration(setDuration)}</span>
+                        <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => addSelectedSongsToSet(st.index)}>Add selected</button>
+                      </div>
                     </div>
                     <ol className="list-decimal space-y-1 pl-5 text-sm">
-                      {st.songs.map((song) => (
+                      {st.songs.map((song, songIndex) => (
                         <li key={`${st.index}-${song.id}`} className="flex flex-wrap items-center justify-between gap-2">
                           <span>
                             {song.title} <span className="text-[var(--muted)]">- {song.artist}{song.bpm != null && <span className="mono text-xs"> ({song.bpm} bpm)</span>}{song.durationSec != null && <span className="mono text-xs"> - {formatDuration(song.durationSec)}</span>}</span>
                           </span>
-                          <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => replaceSong(st.index, song.id)}>Replace</button>
+                          <div className="flex flex-wrap gap-1">
+                            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => moveBuiltSong(st.index, songIndex, -1)}>Up</button>
+                            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => moveBuiltSong(st.index, songIndex, 1)}>Down</button>
+                            <button type="button" className="btn btn-ghost px-2 py-1 text-xs" onClick={() => replaceSong(st.index, song.id)}>Replace</button>
+                            <button type="button" className="btn btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => removeBuiltSong(st.index, songIndex)}>Remove</button>
+                          </div>
                         </li>
                       ))}
                     </ol>
